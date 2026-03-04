@@ -1,6 +1,8 @@
 # Run with:
-#   modal run run_neo4j.py              # bf16 inference (default)
-#   modal run run_neo4j.py --quantize   # 4-bit NF4 inference (matching Neo4j's eval)
+#   modal run run_neo4j.py                        # bf16 + sampling (default)
+#   modal run run_neo4j.py --quantize             # 4-bit NF4 + sampling
+#   modal run run_neo4j.py --quantize --greedy    # 4-bit NF4 + greedy (matches Neo4j)
+#   modal run run_neo4j.py --greedy               # bf16 + greedy
 
 import json
 import os
@@ -29,33 +31,27 @@ results_vol = modal.Volume.from_name("neo4j-eval-results", create_if_missing=Tru
 MODEL_NAME = "neo4j/text2cypher-gemma-2-9b-it-finetuned-2024v1"
 BATCH_SIZE = 4
 
-SYSTEM_PROMPT = (
-    "Task: Generate Cypher statement to query a graph database.\n"
-    "Instructions: Use only the provided relationship types and properties in the schema.\n"
-    "Do not use any other relationship types or properties that are not provided in the schema.\n"
-    "Do not include any explanations or apologies in your responses.\n"
-    "Do not respond to any questions that might ask anything else than for you to construct a Cypher statement.\n"
-    "Do not include any text except the generated Cypher statement."
+# Matches Neo4j's model card exactly (no system prompt — Gemma-2 has no system role)
+INSTRUCTION = (
+    "Generate Cypher statement to query a graph database. "
+    "Use only the provided relationship types and properties in the schema. \n"
+    "Schema: {schema} \n Question: {question}  \n Cypher output: "
 )
 
-USER_PROMPT = (
-    "Generate Cypher statement to query a graph database.\n"
-    "Use only the provided relationship types and properties in the schema.\n"
-    "Schema: {schema}\n"
-    "Question: {question}\n"
-    "Cypher output:"
-)
-
-PREDICTIONS_BF16_FILENAME = "predictions.jsonl"
-PREDICTIONS_4BIT_FILENAME = "predictions_4bit.jsonl"
 LOCAL_RESULTS_DIR = "results"
+
+
+def _predictions_filename(quantize: bool, greedy: bool) -> str:
+    precision = "4bit" if quantize else "bf16"
+    decoding = "greedy" if greedy else "sampling"
+    return f"predictions_{precision}_{decoding}.jsonl"
 
 
 def prepare_chat_prompt(question: str, schema: str) -> list[dict]:
     chat = [
         {
             "role": "user",
-            "content": SYSTEM_PROMPT + "\n\n" + USER_PROMPT.format(schema=schema, question=question),
+            "content": INSTRUCTION.format(schema=schema, question=question),
         },
     ]
     return chat
@@ -83,7 +79,7 @@ def _postprocess_output_cypher(output_cypher: str) -> str:
     env={"HF_HUB_ENABLE_HF_TRANSFER": "1"},
 )
 class Text2CypherEvaluator:
-    def _load_model(self, quantize: bool = False):
+    def _load_model(self, quantize: bool = False, greedy: bool = False):
         """Load model with specified precision. Called once at start of evaluation."""
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -123,31 +119,40 @@ class Text2CypherEvaluator:
             print("Model loaded in bf16 precision.")
 
         self.model.eval()
-        self.generate_params = {
-            "top_p": 0.9,
-            "temperature": 0.2,
-            "max_new_tokens": 512,
-            "do_sample": True,
-            "pad_token_id": self.tokenizer.eos_token_id,
-        }
+        if greedy:
+            self.generate_params = {
+                "do_sample": False,
+                "max_new_tokens": 512,
+                "pad_token_id": self.tokenizer.eos_token_id,
+            }
+            print("Decoding: greedy (deterministic).")
+        else:
+            self.generate_params = {
+                "top_p": 0.9,
+                "temperature": 0.2,
+                "max_new_tokens": 512,
+                "do_sample": True,
+                "pad_token_id": self.tokenizer.eos_token_id,
+            }
+            print("Decoding: sampling (temperature=0.2, top_p=0.9).")
 
     @modal.method()
-    def run_evaluation(self, quantize: bool = False) -> str:
+    def run_evaluation(self, quantize: bool = False, greedy: bool = False) -> str:
         import torch
         from datasets import load_dataset
 
-        # Load model with specified precision
-        self._load_model(quantize=quantize)
+        # Load model with specified precision and decoding strategy
+        self._load_model(quantize=quantize, greedy=greedy)
 
         # Load test split
         ds = load_dataset("neo4j/text2cypher-2024v1", split="test")
         total = len(ds)
         print(f"Loaded {total} test examples.")
 
-        # Use appropriate output file based on quantization mode
-        predictions_filename = PREDICTIONS_4BIT_FILENAME if quantize else PREDICTIONS_BF16_FILENAME
-        mode_label = "4-bit NF4" if quantize else "bf16"
-        print(f"Evaluation mode: {mode_label}, output: {predictions_filename}")
+        predictions_filename = _predictions_filename(quantize, greedy)
+        precision_label = "4-bit NF4" if quantize else "bf16"
+        decoding_label = "greedy" if greedy else "sampling"
+        print(f"Evaluation mode: {precision_label} + {decoding_label}, output: {predictions_filename}")
 
         # Load checkpoint: collect already-completed instance_ids
         output_path = f"/results/{predictions_filename}"
@@ -338,24 +343,25 @@ def print_summary(metrics: dict):
 
 
 @app.local_entrypoint()
-def main(quantize: bool = False):
-    predictions_filename = PREDICTIONS_4BIT_FILENAME if quantize else PREDICTIONS_BF16_FILENAME
-    metrics_filename = "metrics_4bit.json" if quantize else "metrics.json"
-    mode_label = "4-bit NF4" if quantize else "bf16"
+def main(quantize: bool = False, greedy: bool = False):
+    predictions_filename = _predictions_filename(quantize, greedy)
+    precision_label = "4bit" if quantize else "bf16"
+    decoding_label = "greedy" if greedy else "sampling"
+    metrics_filename = f"metrics_{precision_label}_{decoding_label}.json"
 
     local_predictions = os.path.join(LOCAL_RESULTS_DIR, predictions_filename)
     local_metrics = os.path.join(LOCAL_RESULTS_DIR, metrics_filename)
 
-    print(f"Mode: {mode_label}")
+    print(f"Mode: {precision_label} + {decoding_label}")
 
     # Step 1: Check if predictions already exist locally
     if os.path.exists(local_predictions) and os.path.getsize(local_predictions) > 0:
         print(f"Found existing predictions at {local_predictions}, skipping inference.")
     else:
         # Step 2: Run evaluation on Modal
-        print(f"Starting {mode_label} evaluation on Modal...")
+        print(f"Starting evaluation on Modal...")
         evaluator = Text2CypherEvaluator()
-        result = evaluator.run_evaluation.remote(quantize=quantize)
+        result = evaluator.run_evaluation.remote(quantize=quantize, greedy=greedy)
         print(result)
 
         # Step 3: Download predictions from Modal volume
