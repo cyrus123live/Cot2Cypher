@@ -1,4 +1,6 @@
-# Run with: modal run run_neo4j.py
+# Run with:
+#   modal run run_neo4j.py              # bf16 inference (default)
+#   modal run run_neo4j.py --quantize   # 4-bit NF4 inference (matching Neo4j's eval)
 
 import json
 import os
@@ -14,6 +16,7 @@ image = (
         "transformers==4.44.2",
         "peft==0.12.0",
         "accelerate==0.33.0",
+        "bitsandbytes==0.43.3",
         "safetensors",
         "sentencepiece",
         "hf-transfer",
@@ -43,7 +46,8 @@ USER_PROMPT = (
     "Cypher output:"
 )
 
-PREDICTIONS_FILENAME = "predictions.jsonl"
+PREDICTIONS_BF16_FILENAME = "predictions.jsonl"
+PREDICTIONS_4BIT_FILENAME = "predictions_4bit.jsonl"
 LOCAL_RESULTS_DIR = "results"
 
 
@@ -74,13 +78,13 @@ def _postprocess_output_cypher(output_cypher: str) -> str:
         "/root/.cache/huggingface": hf_cache,
         "/results": results_vol,
     },
-    timeout=7200,
+    timeout=21600,  # 6 hours (4-bit inference is ~4x slower than bf16)
     scaledown_window=300,
     env={"HF_HUB_ENABLE_HF_TRANSFER": "1"},
 )
 class Text2CypherEvaluator:
-    @modal.enter()
-    def load_model(self):
+    def _load_model(self, quantize: bool = False):
+        """Load model with specified precision. Called once at start of evaluation."""
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -90,13 +94,34 @@ class Text2CypherEvaluator:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        self.model = AutoModelForCausalLM.from_pretrained(
-            MODEL_NAME,
-            torch_dtype=torch.bfloat16,
-            attn_implementation="eager",
-            low_cpu_mem_usage=True,
-            device_map="auto",
-        )
+        if quantize:
+            from transformers import BitsAndBytesConfig
+
+            # Match Neo4j's exact quantization config
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.bfloat16,
+            )
+            self.model = AutoModelForCausalLM.from_pretrained(
+                MODEL_NAME,
+                quantization_config=bnb_config,
+                attn_implementation="eager",
+                low_cpu_mem_usage=True,
+                device_map="auto",
+            )
+            print("Model loaded in 4-bit NF4 quantization (matching Neo4j config).")
+        else:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                MODEL_NAME,
+                torch_dtype=torch.bfloat16,
+                attn_implementation="eager",
+                low_cpu_mem_usage=True,
+                device_map="auto",
+            )
+            print("Model loaded in bf16 precision.")
+
         self.model.eval()
         self.generate_params = {
             "top_p": 0.9,
@@ -105,20 +130,27 @@ class Text2CypherEvaluator:
             "do_sample": True,
             "pad_token_id": self.tokenizer.eos_token_id,
         }
-        print("Model loaded successfully.")
 
     @modal.method()
-    def run_evaluation(self) -> str:
+    def run_evaluation(self, quantize: bool = False) -> str:
         import torch
         from datasets import load_dataset
+
+        # Load model with specified precision
+        self._load_model(quantize=quantize)
 
         # Load test split
         ds = load_dataset("neo4j/text2cypher-2024v1", split="test")
         total = len(ds)
         print(f"Loaded {total} test examples.")
 
+        # Use appropriate output file based on quantization mode
+        predictions_filename = PREDICTIONS_4BIT_FILENAME if quantize else PREDICTIONS_BF16_FILENAME
+        mode_label = "4-bit NF4" if quantize else "bf16"
+        print(f"Evaluation mode: {mode_label}, output: {predictions_filename}")
+
         # Load checkpoint: collect already-completed instance_ids
-        output_path = f"/results/{PREDICTIONS_FILENAME}"
+        output_path = f"/results/{predictions_filename}"
         completed_ids = set()
         if os.path.exists(output_path):
             with open(output_path, "r") as f:
@@ -306,24 +338,30 @@ def print_summary(metrics: dict):
 
 
 @app.local_entrypoint()
-def main():
-    local_predictions = os.path.join(LOCAL_RESULTS_DIR, PREDICTIONS_FILENAME)
-    local_metrics = os.path.join(LOCAL_RESULTS_DIR, "metrics.json")
+def main(quantize: bool = False):
+    predictions_filename = PREDICTIONS_4BIT_FILENAME if quantize else PREDICTIONS_BF16_FILENAME
+    metrics_filename = "metrics_4bit.json" if quantize else "metrics.json"
+    mode_label = "4-bit NF4" if quantize else "bf16"
+
+    local_predictions = os.path.join(LOCAL_RESULTS_DIR, predictions_filename)
+    local_metrics = os.path.join(LOCAL_RESULTS_DIR, metrics_filename)
+
+    print(f"Mode: {mode_label}")
 
     # Step 1: Check if predictions already exist locally
-    if os.path.exists(local_predictions):
+    if os.path.exists(local_predictions) and os.path.getsize(local_predictions) > 0:
         print(f"Found existing predictions at {local_predictions}, skipping inference.")
     else:
         # Step 2: Run evaluation on Modal
-        print("Starting evaluation on Modal...")
+        print(f"Starting {mode_label} evaluation on Modal...")
         evaluator = Text2CypherEvaluator()
-        result = evaluator.run_evaluation.remote()
+        result = evaluator.run_evaluation.remote(quantize=quantize)
         print(result)
 
         # Step 3: Download predictions from Modal volume
         os.makedirs(LOCAL_RESULTS_DIR, exist_ok=True)
         print("Downloading predictions from Modal volume...")
-        data = results_vol.read_file(PREDICTIONS_FILENAME)
+        data = results_vol.read_file(predictions_filename)
         with open(local_predictions, "wb") as f:
             f.write(data)
         print(f"Saved predictions to {local_predictions}")

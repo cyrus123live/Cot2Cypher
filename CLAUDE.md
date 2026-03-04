@@ -891,10 +891,46 @@ For Gemma-2-9B in BF16 (~18GB): 1x L4 ($0.80/hr) or 1x A10G ($1.00/hr).
 
 ### Step 1: Reproduce Baseline
 Run Neo4j's fine-tuned Gemma-2-9B on their test set to get comparable numbers.
-- **Current file:** `run_neo4j.py` (uses Modal for GPU, loads model with 4-bit quantization)
-- Uses A10G GPU via Modal
-- Need to run full evaluation on 4,833 test examples
+- **Current file:** `run_neo4j.py` (uses Modal for GPU, supports both bf16 and 4-bit quantized inference)
+- Uses A100-80GB GPU via Modal
+- 4,833 test examples evaluated
 - **Target numbers to reproduce:** GLEU 0.5560, ExactMatch 0.2104
+
+#### Step 1 Results
+
+**Both precisions evaluated (completed):**
+
+| Metric | Neo4j Paper | Our 4-bit | Our BF16 |
+|--------|------------|-----------|----------|
+| **GLEU** | 0.5560 | **0.6447** | **0.6267** |
+| **String Exact Match** | N/A | **0.1643** (794/4833) | **0.1208** (584/4833) |
+| **Execution Exact Match** | 0.2104 | N/A | N/A |
+
+**BF16 per-source breakdown:**
+
+| Source | Count | GLEU | ExMatch |
+|--------|------:|-----:|--------:|
+| neo4jLabs_functional_cypher | 1483 | 0.7256 | 0.1935 |
+| neo4jLabs_synthetic_gpt4turbo | 689 | 0.6490 | 0.1118 |
+| neo4jLabs_synthetic_claudeopus | 383 | 0.6098 | 0.0679 |
+| neo4jLabs_synthetic_gpt4o | 694 | 0.5894 | 0.0548 |
+| neo4j_text2cypher2023_test | 723 | 0.5561 | 0.1383 |
+| neo4jLabs_synthetic_gemini | 654 | 0.5496 | 0.0780 |
+| neo4j_rageval_movies | 10 | 0.6001 | 0.2000 |
+| neo4j_rageval_products | 25 | 0.5280 | 0.0800 |
+| hf_iprahara | 11 | 0.5211 | 0.0000 |
+| neo4j_crowdsourced | 51 | 0.3750 | 0.0196 |
+| cyspider_* (6 sources combined) | 110 | 0.24-0.36 | 0.0000 |
+
+**Key finding: Precision gap hypothesis invalidated.** Both our 4-bit (0.6447) and bf16 (0.6267) runs exceed Neo4j's published 0.5560 by ~0.07-0.09 GLEU. The 4-bit vs bf16 difference is small and noisy (we used `do_sample=True, temperature=0.2`, introducing randomness between runs). The discrepancy with Neo4j's number is NOT attributable to inference precision.
+
+**Likely source of discrepancy: Prompt template.** Our script includes the full system prompt ("Do not include any explanations...", "Do not respond to any questions...") concatenated into the user message, while the HuggingFace model card's official inference example uses a shorter 2-sentence instruction without those extra "Do not..." constraints. The extra instructions likely help the model produce cleaner Cypher output, boosting GLEU. Other possible factors include GLEU computation methodology (corpus-level vs per-example averaging) and sampling variance across runs.
+
+**Note on exact match:** Our scores are **string** exact match (whitespace-normalized); Neo4j's 0.2104 is **execution-based** exact match (running queries against databases). These are not directly comparable — execution-based EM is more lenient since semantically equivalent queries with different syntax still match.
+
+**Evaluation plan:** For a fair thesis comparison, we use the **same setup** (prompt, generation params, precision) for both baseline and CoT model. The absolute numbers vs Neo4j's paper matter less than the delta between our baseline and our CoT model under identical conditions. We will report both bf16 and 4-bit results:
+- 4-bit CoT vs 4-bit baseline → isolates CoT contribution
+- bf16 CoT vs bf16 baseline → isolates CoT contribution at higher precision
 
 ### Step 2: Generate Chain-of-Thought Training Data
 For each of the 39,554 training examples:
