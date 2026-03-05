@@ -1,8 +1,9 @@
 # Run with:
-#   modal run run_neo4j.py                        # bf16 + sampling (default)
-#   modal run run_neo4j.py --quantize             # 4-bit NF4 + sampling
-#   modal run run_neo4j.py --quantize --greedy    # 4-bit NF4 + greedy (matches Neo4j)
-#   modal run run_neo4j.py --greedy               # bf16 + greedy
+#   modal run run_neo4j.py --quantize --greedy                          # default baseline
+#   modal run run_neo4j.py --quantize --greedy --max-length 1600        # test truncation
+#   modal run run_neo4j.py --quantize --greedy --batch-size 1           # test no padding
+#   modal run run_neo4j.py --quantize --greedy --peft-loading           # test explicit PEFT
+#   modal run run_neo4j.py --quantize --greedy --max-length 1600 --batch-size 1 --peft-loading  # all fixes
 
 import json
 import os
@@ -28,8 +29,10 @@ image = (
 hf_cache = modal.Volume.from_name("huggingface-cache", create_if_missing=True)
 results_vol = modal.Volume.from_name("neo4j-eval-results", create_if_missing=True)
 
-MODEL_NAME = "neo4j/text2cypher-gemma-2-9b-it-finetuned-2024v1"
-BATCH_SIZE = 4
+ADAPTER_NAME = "neo4j/text2cypher-gemma-2-9b-it-finetuned-2024v1"
+BASE_MODEL_NAME = "google/gemma-2-9b-it"
+DEFAULT_BATCH_SIZE = 4
+DEFAULT_MAX_LENGTH = 7680
 
 # Matches Neo4j's model card exactly (no system prompt — Gemma-2 has no system role)
 INSTRUCTION = (
@@ -41,10 +44,18 @@ INSTRUCTION = (
 LOCAL_RESULTS_DIR = "results"
 
 
-def _predictions_filename(quantize: bool, greedy: bool) -> str:
+def _predictions_filename(quantize: bool, greedy: bool, max_length: int,
+                          batch_size: int, peft_loading: bool) -> str:
     precision = "4bit" if quantize else "bf16"
     decoding = "greedy" if greedy else "sampling"
-    return f"predictions_{precision}_{decoding}.jsonl"
+    parts = [f"predictions_{precision}_{decoding}"]
+    if max_length != DEFAULT_MAX_LENGTH:
+        parts.append(f"ml{max_length}")
+    if batch_size != DEFAULT_BATCH_SIZE:
+        parts.append(f"bs{batch_size}")
+    if peft_loading:
+        parts.append("peft")
+    return "_".join(parts) + ".jsonl"
 
 
 def prepare_chat_prompt(question: str, schema: str) -> list[dict]:
@@ -79,44 +90,55 @@ def _postprocess_output_cypher(output_cypher: str) -> str:
     env={"HF_HUB_ENABLE_HF_TRANSFER": "1"},
 )
 class Text2CypherEvaluator:
-    def _load_model(self, quantize: bool = False, greedy: bool = False):
+    def _load_model(self, quantize: bool = False, greedy: bool = False,
+                    peft_loading: bool = False):
         """Load model with specified precision. Called once at start of evaluation."""
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        self.tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+        self.tokenizer = AutoTokenizer.from_pretrained(ADAPTER_NAME)
         # Left-pad for batched generation with decoder-only models
         self.tokenizer.padding_side = "left"
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
+        bnb_config = None
         if quantize:
             from transformers import BitsAndBytesConfig
-
-            # Match Neo4j's exact quantization config
             bnb_config = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_use_double_quant=True,
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_compute_dtype=torch.bfloat16,
             )
-            self.model = AutoModelForCausalLM.from_pretrained(
-                MODEL_NAME,
+
+        if peft_loading:
+            # Explicit PEFT loading: base model + adapter separately
+            from peft import PeftModel
+            base_model = AutoModelForCausalLM.from_pretrained(
+                BASE_MODEL_NAME,
                 quantization_config=bnb_config,
-                attn_implementation="eager",
-                low_cpu_mem_usage=True,
-                device_map="auto",
-            )
-            print("Model loaded in 4-bit NF4 quantization (matching Neo4j config).")
-        else:
-            self.model = AutoModelForCausalLM.from_pretrained(
-                MODEL_NAME,
                 torch_dtype=torch.bfloat16,
                 attn_implementation="eager",
                 low_cpu_mem_usage=True,
                 device_map="auto",
             )
-            print("Model loaded in bf16 precision.")
+            self.model = PeftModel.from_pretrained(base_model, ADAPTER_NAME)
+            print(f"Model loaded via PeftModel (base={BASE_MODEL_NAME} + adapter).")
+        else:
+            # Auto-loading: transformers auto-detects adapter and merges
+            self.model = AutoModelForCausalLM.from_pretrained(
+                ADAPTER_NAME,
+                quantization_config=bnb_config,
+                torch_dtype=torch.bfloat16,
+                attn_implementation="eager",
+                low_cpu_mem_usage=True,
+                device_map="auto",
+            )
+            print("Model loaded via AutoModelForCausalLM (auto-merge).")
+
+        precision_label = "4-bit NF4" if quantize else "bf16"
+        print(f"Precision: {precision_label}.")
 
         self.model.eval()
         if greedy:
@@ -137,22 +159,26 @@ class Text2CypherEvaluator:
             print("Decoding: sampling (temperature=0.2, top_p=0.9).")
 
     @modal.method()
-    def run_evaluation(self, quantize: bool = False, greedy: bool = False) -> str:
+    def run_evaluation(self, quantize: bool = False, greedy: bool = False,
+                       max_length: int = DEFAULT_MAX_LENGTH,
+                       batch_size: int = DEFAULT_BATCH_SIZE,
+                       peft_loading: bool = False) -> str:
         import torch
         from datasets import load_dataset
 
         # Load model with specified precision and decoding strategy
-        self._load_model(quantize=quantize, greedy=greedy)
+        self._load_model(quantize=quantize, greedy=greedy, peft_loading=peft_loading)
 
         # Load test split
         ds = load_dataset("neo4j/text2cypher-2024v1", split="test")
         total = len(ds)
         print(f"Loaded {total} test examples.")
 
-        predictions_filename = _predictions_filename(quantize, greedy)
-        precision_label = "4-bit NF4" if quantize else "bf16"
-        decoding_label = "greedy" if greedy else "sampling"
-        print(f"Evaluation mode: {precision_label} + {decoding_label}, output: {predictions_filename}")
+        predictions_filename = _predictions_filename(quantize, greedy, max_length,
+                                                     batch_size, peft_loading)
+        print(f"Output: {predictions_filename}")
+        print(f"Config: max_length={max_length}, batch_size={batch_size}, "
+              f"peft_loading={peft_loading}")
 
         # Load checkpoint: collect already-completed instance_ids
         output_path = f"/results/{predictions_filename}"
@@ -175,13 +201,13 @@ class Text2CypherEvaluator:
             print("All examples already completed.")
             return "Done. Nothing to process."
 
-        print(f"{len(pending)} examples to process in batches of {BATCH_SIZE}.")
+        print(f"{len(pending)} examples to process in batches of {batch_size}.")
         start_time = time.time()
         processed = 0
 
         with open(output_path, "a") as out_f:
-            for batch_start in range(0, len(pending), BATCH_SIZE):
-                batch = pending[batch_start : batch_start + BATCH_SIZE]
+            for batch_start in range(0, len(pending), batch_size):
+                batch = pending[batch_start : batch_start + batch_size]
 
                 # Prepare batch prompts
                 prompts = []
@@ -197,7 +223,7 @@ class Text2CypherEvaluator:
                 # Tokenize with left-padding for batch
                 inputs = self.tokenizer(
                     prompts, return_tensors="pt", padding=True, truncation=True,
-                    max_length=7680,
+                    max_length=max_length,
                 ).to(self.model.device)
 
                 # Generate batch
@@ -226,12 +252,12 @@ class Text2CypherEvaluator:
                 total_done = len(completed_ids) + processed
 
                 # Checkpoint every 100 examples
-                if processed % 100 < BATCH_SIZE:
+                if processed % 100 < batch_size:
                     out_f.flush()
                     results_vol.commit()
 
                 # Progress logging
-                if processed % 50 < BATCH_SIZE:
+                if processed % 50 < batch_size:
                     elapsed = time.time() - start_time
                     rate = processed / elapsed
                     remaining = len(pending) - processed
@@ -343,25 +369,31 @@ def print_summary(metrics: dict):
 
 
 @app.local_entrypoint()
-def main(quantize: bool = False, greedy: bool = False):
-    predictions_filename = _predictions_filename(quantize, greedy)
-    precision_label = "4bit" if quantize else "bf16"
-    decoding_label = "greedy" if greedy else "sampling"
-    metrics_filename = f"metrics_{precision_label}_{decoding_label}.json"
+def main(quantize: bool = False, greedy: bool = False,
+         max_length: int = DEFAULT_MAX_LENGTH, batch_size: int = DEFAULT_BATCH_SIZE,
+         peft_loading: bool = False):
+    predictions_filename = _predictions_filename(quantize, greedy, max_length,
+                                                 batch_size, peft_loading)
+    metrics_filename = predictions_filename.replace("predictions_", "metrics_").replace(".jsonl", ".json")
 
     local_predictions = os.path.join(LOCAL_RESULTS_DIR, predictions_filename)
     local_metrics = os.path.join(LOCAL_RESULTS_DIR, metrics_filename)
 
-    print(f"Mode: {precision_label} + {decoding_label}")
+    print(f"Config: quantize={quantize}, greedy={greedy}, max_length={max_length}, "
+          f"batch_size={batch_size}, peft_loading={peft_loading}")
+    print(f"Output: {predictions_filename}")
 
     # Step 1: Check if predictions already exist locally
     if os.path.exists(local_predictions) and os.path.getsize(local_predictions) > 0:
         print(f"Found existing predictions at {local_predictions}, skipping inference.")
     else:
         # Step 2: Run evaluation on Modal
-        print(f"Starting evaluation on Modal...")
+        print("Starting evaluation on Modal...")
         evaluator = Text2CypherEvaluator()
-        result = evaluator.run_evaluation.remote(quantize=quantize, greedy=greedy)
+        result = evaluator.run_evaluation.remote(
+            quantize=quantize, greedy=greedy, max_length=max_length,
+            batch_size=batch_size, peft_loading=peft_loading,
+        )
         print(result)
 
         # Step 3: Download predictions from Modal volume
