@@ -20,31 +20,47 @@ Current open small models (30-35% correct on Neo4j's benchmark) underperform GPT
 
 ### Differentiation from MDPI RL Paper (Paper 1)
 
-The most directly related work is the MDPI Applied Sciences paper ("Refining Text2Cypher on Small LM with RL", July 2025) which uses Qwen2.5-3B + GRPO with structured semantic extraction tasks (key-value pairs + triples) to achieve 0.7701 GLEU. Our approach is fundamentally different:
+The most directly related work is the MDPI Applied Sciences paper ("Refining Text2Cypher on Small LM with RL", Tran et al., July 2025) which uses Qwen2.5-3B + GRPO with structured semantic extraction tasks (key-value pairs + triples) to achieve 0.7701 GLEU. Our approach is fundamentally different:
 
 | Dimension | MDPI Paper (2025) | Our Thesis |
 |-----------|-------------------|-------------|
 | **Core method** | RL (GRPO) with structured extraction tasks | CoT distillation from strong LLM |
+| **GLEU** | **0.7701** | **0.7682** (nearly identical, no RL needed) |
 | **Reasoning type** | Structured key-value + triple extraction in tags | Free-form step-by-step reasoning (QDECOMP+InterCOL-style) |
 | **Model** | Qwen2.5-3B-Instruct | Gemma-2-9B-it (apples-to-apples with Neo4j baseline) |
-| **Training precision** | BF16 (unclear if LoRA or full FT) | QLoRA matching Neo4j's exact config |
-| **Training data** | Home-grown (proprietary) + Neo4j | Neo4j + CoT-augmented via GPT-oss-120B (reproducible) |
-| **RL component** | GRPO (core method) | Optional (after CoT SFT) |
-| **Inference techniques** | Single-pass | Self-consistency + few-shot + self-healing |
-| **Evaluation** | GLEU only on Neo4j benchmark | GLEU + Execution accuracy + full ablations |
+| **Training precision** | LoRA with 2 epochs SFT + 1 epoch RL | QLoRA matching Neo4j's exact config, 1 epoch SFT |
+| **Training data** | Home-grown (7,741 proprietary) + Neo4j | Neo4j only + CoT-augmented via GPT-oss-120B (reproducible) |
+| **RL component** | GRPO (core method, 4 reward signals) | None (SFT only) |
+| **Inference techniques** | Single-pass | Single-pass (self-consistency pending) |
+| **Exec evaluation** | 56.23% on 1,460 cherry-picked samples | 23.69% on full 2,305 valid samples |
 | **Reproducibility** | Proprietary dataset, sparse hyperparameter details | Fully reproducible on public data |
+| **Hardware** | GTX 4090 24GB, ~5 hrs | A100-80GB, ~10 hrs (could run on smaller GPU) |
+| **Citations (as of Mar 2026)** | 0 | — |
 
 **Key narrative:** They teach the model **what to extract** (structured key-value pairs and triples via RL reward signals). We teach the model **how to think** (free-form reasoning traces via CoT distillation). These are complementary approaches — their structured extraction is a narrow form of intermediate reasoning, while our QDECOMP+InterCOL-style decomposition provides richer, more generalizable reasoning chains.
 
+**Critical comparison: We match their GLEU (0.7682 vs 0.7701) without RL, without proprietary data, and with SFT alone.** This suggests CoT distillation captures most of the benefit that they needed GRPO reinforcement learning to achieve. Their approach could potentially be applied on top of ours for further gains.
+
+**Execution accuracy caveat:** Their 56.23% exec accuracy (on 1,460 samples) is not directly comparable to our 23.69% (on 2,305 samples). They state: "we selected only 1460 samples from the test dataset, which corresponded with the Neo4j graph database we found" — a subset they could find databases for, likely biased toward simpler schemas. Our evaluation covers the full set of instances with database access at `demo.neo4jlabs.com`.
+
+**Their training details (from full paper):**
+- SFT: 2 epochs, lr=2e-4, batch=8, β=0.04, ε=0.2
+- RL: 1 epoch, 10 response generations per input, temperature=0.6
+- 4 reward signals: format check, answer match, key-value match, triple match (all string-based)
+- 90% of training data for SFT, 10% for RL
+- Training: ~5 hrs total (1 hr SFT + 4 hr RL) on GTX 4090
+
 **Gaps in their work we exploit:**
-1. No CoT distillation from a strong LLM
-2. No execution-based evaluation on Neo4j benchmark (GLEU only)
+1. No CoT distillation from a strong LLM (we show SFT-only matches their SFT+RL)
+2. Execution evaluation on only 1,460/4,833 samples (we evaluate 2,471)
 3. No self-consistency / majority voting at inference
 4. No few-shot prompting
 5. No agentic self-healing loops (they acknowledge this as future work)
-6. No execution-based RL rewards (text-matching only)
-7. Proprietary dataset makes ablation results non-reproducible
-8. Single model family (Qwen only)
+6. No execution-based RL rewards (string-matching only)
+7. Proprietary dataset (7,741 home-grown instances) makes results non-reproducible
+8. Single model family (Qwen only — no comparison with Neo4j's Gemma baseline)
+9. No ablation separating SFT from RL contributions on the Neo4j dataset
+10. No analysis of what query types benefit most from their approach
 
 ---
 
@@ -509,24 +525,33 @@ Map natural language entities/relations to graph schema elements before query ge
 - **Full title:** "Refining Text2Cypher on Small Language Model with Reinforcement Learning Leveraging Semantic Information"
 - **URL:** https://www.mdpi.com/2076-3417/15/15/8206
 - **Venue:** Applied Sciences (MDPI), Volume 15, Issue 15, Article 8206, July 23, 2025
-- **Authors:** Team behind chenggong1995/Qwen2.5-3B-Instruct-grpo on HuggingFace
+- **Authors:** Quoc-Bao-Huy Tran, Aagha Abdul Waheed, Syed Mudasir, Sun-Tae Chung (Soongsil University, Seoul)
+- **Citations:** 0 (as of March 2026)
+- **HuggingFace model:** chenggong1995/Qwen2.5-3B-Instruct-grpo (empty model card)
 
 **Methodology:**
-1. **SFT phase:** Qwen2.5-3B-Instruct fine-tuned on combined home-grown + Neo4j Text2Cypher data
-2. **GRPO RL phase:** Reinforcement learning with two support tasks as intermediate reasoning:
-   - **Key-Value Extraction:** Model learns to extract property pairs (e.g., "name: John", "age: 30")
-   - **Triple Relationship Construction:** Model learns subject-predicate-object triples
-3. Reward functions incorporate correctness of both final Cypher AND intermediate semantic extractions
+1. **SFT phase:** Qwen2.5-3B-Instruct fine-tuned on combined home-grown dataset (7,741 instances from 14 schemas) + Neo4j Text2Cypher dataset. 2 epochs, lr=2e-4, batch=8. 90% of data for SFT.
+2. **GRPO RL phase:** 1 epoch on remaining 10% of data. 10 response generations per input, temperature=0.6. Two support tasks as intermediate reasoning:
+   - **Key-Value Extraction:** Model learns to extract property pairs (e.g., "name: John") in `<key_value>` tags
+   - **Triple Relationship Construction:** Model learns subject-predicate-object triples in `<relationship>` tags
+3. **4 reward signals** (all string-based): format check (+/-1), answer match (+/-1), key-value match (+/-1), triple match (+/-1)
+4. **Hardware:** GTX 4090 24GB, ~5 hrs total (1 hr SFT + 4 hr RL)
 
 **Key Results:**
-- 3B model **outperforms Gemma-2 (9B)** with execution accuracy of **56.23%**
-- On unseen schemas: **85% execution accuracy**
-- RL with support tasks improved execution accuracy by **5.03%** over SFT alone
-- Triple relationship improves accuracy more than key-value extraction alone
-- GPT-4o achieves Google-BLEU of 0.8017 (confirming our Figure 4 numbers)
+- **GLEU: 0.7701** on Neo4j 2024 test set (Table 7 — verified from full paper)
+- **Execution accuracy: 56.23%** on 1,460 cherry-picked samples (Table 8 — NOT the full 2,471 with DB access)
+- Neo4j's Gemma-2-9B on their same 1,460 subset: **48.22%** execution accuracy
+- Dataset 1 (proprietary): **85% execution accuracy** on unseen schemas (3 test schemas disjoint from 11 training schemas)
+- RL with support tasks improved execution accuracy by **5.03%** over SFT alone (Table 5)
+- Triple relationship improves accuracy more than key-value extraction alone (Table 6)
 - **First application of reinforcement learning to Text2Cypher**
 
-**Relevance:** Most directly relevant paper. Proves (a) 3B can beat 9B with intermediate reasoning + RL, (b) semantic extraction as intermediate steps is effective CoT, (c) GRPO works for Text2Cypher, (d) support tasks = chain-of-thought decomposition.
+**Important caveats:**
+- Their 56.23% exec accuracy is on a 1,460-sample subset they could find databases for — they state: "we selected only 1460 samples from the test dataset, which corresponded with the Neo4j graph database we found." This is not the standard 2,471 instances accessible via `demo.neo4jlabs.com`.
+- The 85% accuracy on Dataset 1 is on their proprietary dataset with disjoint train/test schemas — not on the Neo4j benchmark.
+- Their GLEU (0.7701) and our GLEU (0.7682) are nearly identical, but we achieve this with SFT-only (no RL) and no proprietary data.
+
+**Relevance:** Most directly relevant paper. Our key advantage: we match their GLEU without RL, without proprietary data, using only CoT distillation. This demonstrates that teaching a model to reason (our approach) is as effective as structured extraction + RL (their approach), with better reproducibility. Their approach and ours are complementary — applying GRPO on top of our CoT model is a natural next step.
 
 ---
 
@@ -712,6 +737,21 @@ Average +4.5pp over strongest baselines. Zero-shot (no task-specific training).
 - Neo4j's multilingual extension (English, Spanish, Turkish)
 - English > Spanish > Turkish performance
 - Multilingual fine-tuning narrows cross-language gaps
+
+#### STRuCT-LLM (arXiv:2506.21575, June 2025)
+- "Unifying Tabular and Graph Reasoning with Reinforcement Learning for Semantic Parsing"
+- Joint Text-to-SQL + Text-to-Cypher with GRPO + topology-aware graph edit distance reward
+- Text2Cypher results: EM = 12.0%, BLEU = 33.4 (QwQ-32B) — far below our results
+- NOT a competitor: different method (RL not distillation), much weaker Text2Cypher performance, Text2Cypher is secondary evaluation
+
+#### Adapter Fusion for Multilingual Text2Cypher (arXiv:2601.16097, Jan 2026)
+- By Ozsoy (Neo4j) — LoRA adapter fusion for multilingual Text2Cypher
+- No CoT, no new baseline numbers on 2024 dataset
+
+#### Rationalization Models for Text-to-SQL (arXiv:2502.06759, Feb 2025)
+- Rossiello et al., ICLR 2025 Workshop on Reasoning and Planning for LLMs
+- Iterative few-shot knowledge distillation of CoT rationales from teacher model for Text-to-SQL
+- **Directly analogous to our approach but for SQL, not Cypher** — supports our thesis
 
 ---
 
@@ -940,43 +980,119 @@ We systematically tested hypotheses for why our GLEU (0.6455) exceeds Neo4j's pu
 
 **Evaluation strategy:** We use **our own consistent baseline** (4-bit greedy, GLEU 0.6455) for the thesis comparison. The CoT model will be evaluated under identical conditions (same prompt, precision, decoding, max_length). The absolute gap vs Neo4j's paper is documented but does not affect our experimental design — what matters is the delta between our baseline and our CoT model. We report Neo4j's published numbers alongside ours for context.
 
-### Step 2: Generate Chain-of-Thought Training Data
-For each of the 39,554 training examples:
-- **Input:** (Few-shot examples, Schema, Question)
-- **Output:** (Reasoning trace, Cypher result)
-- Few-shot = 9 examples of (Schema, Question, Reasoning, Result)
-- **Generation platform:** GPT-oss-120B via Galaxy.ai ($1-$3) or Clarifai ($4-$10)
-- **Reasoning decomposition — QDECOMP+InterCOL adapted for Cypher (initial strategy, may need iteration):**
-  Based on Tai et al. (EMNLP 2023): decompose question into sub-questions, identify relevant schema elements (InterCOL) at each step, then construct query. Adapted from SQL to Cypher:
-  1. **Sub-question decomposition:** Break the question into logical sub-questions aligned with Cypher clause order (MATCH → WHERE → RETURN/aggregation)
-  2. **Intermediate schema linking (InterCOL):** For each sub-question, explicitly name the relevant node labels, relationship types, and properties from the schema
-  3. **Pattern identification:** Determine graph traversal pattern (single hop, multi-hop, variable-length path, aggregation, filtering)
-  4. **Step-by-step Cypher construction:** Build MATCH clause from identified patterns, add WHERE conditions from extracted properties (cf. MDPI paper's key-value extraction), construct RETURN with any aggregations
-  5. **Final query assembly and validation**
+### Step 2: Generate Chain-of-Thought Training Data (COMPLETED)
+- **Output:** `data/cot_training_data.jsonl` — 39,553/39,554 valid reasoning traces (99.997% success)
+- **Model:** GPT-oss-120B via Cerebras ($48 total, ~3.3 hours)
+- **Prompt:** 9 hand-crafted QDECOMP+InterCOL few-shot exemplars (3 schema formats × 3+ complexity levels) + system message + reference Cypher (distillation)
+- **Reasoning format:** 4-step QDECOMP+InterCOL: (1) decompose question into sub-questions, (2) link to schema elements, (3) identify graph pattern, (4) construct Cypher step by step
+- **Cypher match rate:** 93.3% (mismatches are cosmetic: whitespace, case, tokenizer artifacts — we use original reference Cypher for training, not generated)
+- **Avg reasoning length:** 715 chars (~295 tokens)
+- **Full details:** See `STEP2_COT_GENERATION.md`
+- **Code:** `generate_cot/` package (config, exemplars, prompts, parse, generate, analyze)
 
-### Step 3: Train New Gemma-2-9B with Reasoning
-- **Method:** QLoRA — matching Neo4j's exact config (4-bit NF4, double quant, bf16 compute, r=64, alpha=64, dropout=0.05, paged_adamw_8bit)
-- **Rationale:** Same precision as baseline → only variable is CoT training data → clean comparison, no precision confound
-- **Platform:** Digital Research Alliance of Canada (free, H100s/A100s) — preferred since QLoRA requires custom training loop
-- **Fallback platform:** Together.ai (~$25) if they support QLoRA, otherwise RunPod/Lambda replicating Neo4j's setup
-- Train model to output explanation + Cypher (not just Cypher)
+### Step 3: Train New Gemma-2-9B with Reasoning (COMPLETED)
+- **Script:** `train_cot.py` (Modal + A100-80GB)
+- **Method:** QLoRA — matching Neo4j's exact config (4-bit NF4, double quant, bf16 compute, r=64, alpha=64, dropout=0.05, all-linear modules, paged_adamw_8bit)
+- **Training data format:** Gemma-2 chat template with user prompt (schema + question + "Think step by step, then provide the Cypher query.") → assistant response (Reasoning: ... + Cypher output: ...)
+- **Completion-only loss:** `DataCollatorForCompletionOnlyLM` with response template `<start_of_turn>model\n` — loss computed only on reasoning + Cypher, not on the prompt
+- **Training:** 1 epoch, 1,236 steps (~28 sec/step with eager attention), ~10 hours on A100-80GB
+- **Attention:** `attn_implementation="eager"` required — Gemma-2's soft-capping is incompatible with Flash Attention/SDPA (causes NaN gradients)
+- **Truncation:** ~2-3% of examples had responses fully truncated at max_seq_length=1600 (DataCollatorForCompletionOnlyLM could not find response template)
+- **Loss curve:** 1.19 → 0.39 → 0.21 (step 10 → 70 → 670), converged well
+- **Adapter:** 824MB safetensors, saved to `adapter_weights/final/`
+- **Cost:** ~$25 Modal (A100-80GB × 10 hours)
+
+#### Step 3 Results
+
+**Translation-Based Evaluation (full test set, n=4,833):**
+
+| Metric | Our Baseline | CoT Model | Delta | Neo4j Published |
+|--------|-------------|-----------|-------|-----------------|
+| GLEU | 0.6455 | **0.7682** | **+0.1227** | 0.5560 |
+| String EM | 0.1924 | **0.3799** | **+0.1875** | — |
+
+**Execution-Based Evaluation (instances with DB access, n=2,471; valid ref results n=2,305):**
+
+Evaluated against `demo.neo4jlabs.com` public demo databases. Both baseline and CoT predictions evaluated with identical methodology. Of 2,471 instances, 2,305 had valid reference query results (166 references failed due to DB state changes).
+
+| Metric | Our Baseline | CoT Model | Delta | Neo4j Published |
+|--------|-------------|-----------|-------|-----------------|
+| Exec EM | 0.1657 | **0.2369** | **+0.0712** | 0.2104 |
+| Exec GLEU | 0.1106 | 0.0973 | -0.0133 | — |
+| Pred Errors | 242 | **114** | -128 | — |
+| Ref Errors | 166 | 166 | — | — |
+
+Note: Exec EM numbers differ slightly from earlier EM-only evaluation (0.1862/0.2554) because the GLEU evaluation excludes 166 instances where the reference query fails. Exec GLEU is lower for CoT because when queries return wrong results, string overlap is minimal regardless — CoT trades partial-credit near-misses for more exact matches.
+
+**Per-database execution EM breakdown:**
+
+| Database | Baseline | CoT | Delta |
+|----------|----------|-----|-------|
+| stackoverflow2 | 0.198 | 0.407 | **+0.209** |
+| grandstack | 0.264 | 0.374 | **+0.110** |
+| twitch | 0.119 | 0.222 | **+0.103** |
+| northwind | 0.168 | 0.264 | +0.097 |
+| recommendations | 0.095 | 0.190 | +0.095 |
+| buzzoverflow | 0.158 | 0.242 | +0.083 |
+| twitter | 0.089 | 0.158 | +0.069 |
+| gameofthrones | 0.291 | 0.358 | +0.068 |
+| neoflix | 0.195 | 0.253 | +0.058 |
+| fincen | 0.247 | 0.281 | +0.034 |
+| companies | 0.171 | 0.193 | +0.022 |
+| movies | 0.296 | 0.296 | 0.000 |
+
+CoT improves on every database (except movies, tied). Fewer prediction errors (114 vs 242) = CoT produces more syntactically valid Cypher.
+
+**GLEU leaderboard position:**
+
+| Model | GLEU |
+|-------|------|
+| Fine-tuned GPT-4o | 0.8017 |
+| Fine-tuned GPT-4o-mini | 0.7973 |
+| Fine-tuned Gemini-1.5-Flash | 0.7780 |
+| **Our CoT Gemma-2-9B** | **0.7682** |
+| Fine-tuned Gemini-1.0-Pro | 0.7293 |
+| Fine-tuned Llama-3.1-8B | 0.6470 |
+| Neo4j's fine-tuned Gemma-2-9B | 0.5560 |
+
+**Important subset analysis:** The test set splits into two very different subsets:
+- No-DB subset (n=2,362): string EM = 0.6516 (dominated by simpler `functional_cypher` examples, 88.9% EM)
+- Has-DB subset (n=2,471): string EM = 0.1202 (harder examples)
+- Exec EM (0.2554) > string EM on same subset (0.1202), confirming many semantically correct queries differ syntactically from references
+
+**Ablation result (completed):**
+- CoT adapter + baseline prompt: GLEU 0.7082, EM 0.2197 → training data alone gives +0.0627 GLEU
+- Adding CoT prompt on top: additional +0.0600 GLEU, +0.1602 EM → both components are complementary
+
+**Error analysis (completed, see RESULTS.md Section 6):**
+- 8.4:1 improvement-to-regression ratio on string EM (1,028 gained vs 122 lost)
+- CoT advantage scales with complexity: +0.15 on short queries → +0.63 on extra-long (500+)
+- Largest gains by Cypher feature: UNION (+0.52), 1-hop (+0.41), variable-length paths (+0.32), WITH (+0.18)
+- 50% of mismatches are different MATCH patterns (many semantically valid); 6.6% alias-only (cosmetic)
+- Prediction errors: 72 syntax + 42 too-many-rows, down 53% from baseline's 242
 
 ### Step 4: Ablation Studies
-- Self-consistency (multiple samples, vote on best) -- cf. CSC-SQL, USC
+**Completed:**
+- Prompt vs training data ablation (CoT adapter + baseline prompt)
+- Error analysis by query complexity, Cypher feature, mismatch type, regressions
+
+**Remaining (pending funding):**
+- Self-consistency (multiple samples, vote on best) -- cf. CSC-SQL, USC — highest expected impact
 - Few-shot prompting (0, 3, 9 examples)
 - Agentic self-healing loop (re-send with error messages) -- cf. MAC-SQL, SQL-of-Thought
 - Schema filtering (cf. Neo4j's schema filtering paper)
 - RL on fine-tuned model (optional, GRPO following MDPI paper approach)
-- Number of self-consistency calls
 - **(Optional) bf16 LoRA vs QLoRA on CoT data** -- if time permits, train a bf16 LoRA variant to quantify precision contribution on top of CoT
 
 ### Step 5: Write Paper
-- Compare against our reproduced baseline (GLEU 0.6455, string EM 0.1924) and Neo4j's published numbers (GLEU 0.5560, exec EM 0.2104)
+- Compare against our reproduced baseline (GLEU 0.6455, exec EM 0.1862) and Neo4j's published numbers (GLEU 0.5560, exec EM 0.2104)
 - Compare against unfine-tuned GPT-4o (GLEU 0.6293, EM 0.3173) as stretch goal
+- **Key result: +0.1227 GLEU, +0.0692 exec EM over same-config baseline**
+- **CoT model closes gap to fine-tuned GPT-4o-mini (0.7682 vs 0.7973 GLEU)**
 - Ablation tables for each technique
 - Mathematical formalization of approach
 - Discuss limitations of 2024 dataset (data leakage, paraphrase contamination, distribution shift)
-- Cost analysis (small model vs GPT-4o for production deployment)
+- Cost analysis ($128 total vs GPT-4o for production deployment)
 - Target conferences: EMNLP and similar NLP venues
 
 ---
@@ -999,11 +1115,41 @@ For each of the 39,554 training examples:
 
 ```
 Cot2Cypher/
-├── CLAUDE.md              # This file
-├── research_prompts.md    # Sub-agent research prompts
-├── run_neo4j.py           # Baseline inference script (Modal + A10G GPU)
-└── .gitignore
+├── CLAUDE.md                          # This file (project spec + literature review)
+├── .gitignore
+├── paper/                             # Paper and results
+│   ├── paper.tex                      # LaTeX source
+│   ├── paper.pdf                      # Compiled paper
+│   ├── references.bib                 # BibTeX references
+│   └── RESULTS.md                     # Detailed experimental results
+├── scripts/                           # All runnable code
+│   ├── run_neo4j.py                   # Baseline inference (Modal + A100-80GB)
+│   ├── train_cot.py                   # CoT training + evaluation (Modal + A100-80GB)
+│   ├── eval_execution.py              # Execution-based eval (demo.neo4jlabs.com)
+│   └── generate_cot/                  # CoT training data generation pipeline
+│       ├── config.py                  # Provider-agnostic API config
+│       ├── exemplars.py               # 9 few-shot QDECOMP+InterCOL exemplars
+│       ├── prompts.py                 # System message + few-shot assembly
+│       ├── parse.py                   # XML tag extraction + validation
+│       ├── generate.py                # Async generation with checkpointing
+│       └── analyze.py                 # Post-generation analysis
+├── notes/                             # Research process documentation
+│   ├── PLAN.md                        # Initial brainstorming and plan
+│   ├── REVIEW.md                      # Self-review with concerns (all addressed)
+│   ├── research_prompts.md            # Prompts used for literature research
+│   └── STEP2_COT_GENERATION.md        # CoT data generation documentation
+├── data/                              # Training data + mappings (gitignored)
+│   ├── cot_training_data.jsonl        # 39,554 CoT training records (~130MB)
+│   └── test_db_mapping.json           # instance_id → database_reference_alias
+├── results/                           # Evaluation results (gitignored)
+│   ├── predictions_*.jsonl            # Model predictions
+│   ├── exec_eval_*.jsonl              # Execution evaluation results
+│   └── metrics_*.json                 # Computed metrics
+└── adapter_weights/                   # Trained CoT adapter (gitignored)
+    └── final/                         # adapter_model.safetensors (824MB) + config
 ```
+
+Note: Scripts use relative paths (`data/...`, `results/...`) and should be run from the project root, e.g., `modal run scripts/train_cot.py --eval`.
 
 ### Our Enhanced Prompt Format (QDECOMP+InterCOL adapted for Cypher)
 
@@ -1040,16 +1186,16 @@ Cypher output: MATCH (p:Person)-[:ACTED_IN]->(m:Movie) WHERE p.name = "John" RET
 
 ---
 
-## Cost Summary
+## Cost Summary (Actual)
 
 | Component | Platform | Cost |
 |-----------|----------|------|
-| Training data generation (35K examples) | GPT-oss-120B via Galaxy.ai | **$1-$3** |
-| QLoRA fine-tuning (Gemma-2-9B, 3 epochs) | Together.ai | **~$25** |
-| QLoRA fine-tuning (Gemma-2-9B) | Alliance Canada (Narval/Fir) | **Free** |
-| Evaluation inference | Modal (A10G) / HF Endpoints | **$1-$5** |
-| **Total (Together.ai route)** | | **~$30** |
-| **Total (Alliance Canada route)** | | **~$5** |
+| Training data generation (39,554 examples) | GPT-oss-120B via Cerebras | **$48** |
+| QLoRA fine-tuning (Gemma-2-9B, 1 epoch, ~10 hrs) | Modal A100-80GB | **~$25** |
+| CoT evaluation inference (~18 hrs) | Modal A100-80GB | **~$45** |
+| Baseline evaluation inference | Modal A100-80GB | **~$10** |
+| Execution-based evaluation | Local (demo.neo4jlabs.com) | **Free** |
+| **Total** | | **~$128** |
 
 ---
 

@@ -1,9 +1,7 @@
-# Run with:
-#   modal run run_neo4j.py --quantize --greedy                          # default baseline
-#   modal run run_neo4j.py --quantize --greedy --max-length 1600        # test truncation
-#   modal run run_neo4j.py --quantize --greedy --batch-size 1           # test no padding
-#   modal run run_neo4j.py --quantize --greedy --peft-loading           # test explicit PEFT
-#   modal run run_neo4j.py --quantize --greedy --max-length 1600 --batch-size 1 --peft-loading  # all fixes
+# Run from project root:
+#   modal run scripts/run_neo4j.py --quantize --greedy                  # default baseline
+#   modal run scripts/run_neo4j.py --quantize --greedy --max-length 1600
+#   modal run scripts/run_neo4j.py --quantize --greedy --peft-loading
 
 import json
 import os

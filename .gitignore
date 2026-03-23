@@ -1,4 +1,13 @@
-venv
-__pycache__
+venv/
+__pycache__/
 .DS_Store
 results/
+data/
+adapter_weights/
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.synctex.gz
+.conductor/

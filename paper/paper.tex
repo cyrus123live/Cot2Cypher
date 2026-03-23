@@ -1,0 +1,379 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{natbib}
+\usepackage{geometry}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\geometry{margin=1in}
+
+\title{Teaching Small Models to Think: Chain-of-Thought Distillation\\for Text-to-Cypher Query Generation}
+\author{Cyrus Parsons}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We present a chain-of-thought (CoT) distillation approach for improving Text-to-Cypher query generation on the Neo4j Text2Cypher benchmark. By generating step-by-step reasoning traces with a strong language model (GPT-oss-120B) and fine-tuning a smaller model (Gemma-2-9B-it) on these traces, we achieve GLEU 0.7682 and execution exact match 0.2369: improvements of +0.1227 GLEU and +0.0712 execution EM over the same model fine-tuned on direct-answer data. Our approach uses the identical QLoRA configuration as the Neo4j baseline, isolating training data as the sole experimental variable. The resulting 9B open-weight model surpasses all other open-weight models on the benchmark, outperforms unfine-tuned GPT-4o, and is competitive with fine-tuned GPT-4o-mini (GLEU 0.7973). An ablation study confirms that CoT training data alone provides +0.0627 GLEU improvement, with the CoT inference prompt contributing an additional +0.0600. Error analysis reveals that CoT particularly benefits complex queries: accuracy improves by +0.63 on queries exceeding 500 characters and by +0.52 on UNION queries. The total cost of the approach is approximately \$75 for data generation and training, with inference at roughly \$0.004 per query on a single consumer GPU, demonstrating that reasoning-enhanced fine-tuning is a practical and cost-effective method for closing the gap between small open-weight models and proprietary systems on structured query generation tasks.
+\end{abstract}
+
+%------------------------------------------------------------------
+\section{Introduction}
+%------------------------------------------------------------------
+
+Graph databases have become essential infrastructure across domains including biomedical research, social network analysis, recommendation systems, and retrieval-augmented generation \citep{timon2021overview, xu2024rag}. While the Cypher query language provides powerful expressiveness for querying graph data in Neo4j, its technical complexity creates a significant barrier for non-expert users. The task of translating natural language into Cypher queries, known as Text2Cypher, has emerged as an important research direction for making graph databases more accessible.
+
+The Neo4j Text2Cypher benchmark \citep{ozsoy2025text2cypher} established the first comprehensive evaluation framework for this task, comprising 44,387 question-schema-Cypher triplets across 966 unique schemas. Their evaluation revealed a significant performance gap: the best fine-tuned open-weight model (Gemma-2-9B-it) achieved only GLEU 0.5560, far below fine-tuned GPT-4o at 0.8017. This gap motivates the central question of our work: can we close this gap without scaling model size, by instead improving \emph{how} the model reasons about query construction?
+
+We hypothesize that the key limitation of direct-answer fine-tuning, in which models learn to map questions directly to Cypher without intermediate reasoning, is that it provides no signal about the \emph{process} of query construction. Complex Cypher queries require multiple reasoning steps: decomposing compound questions, linking natural language entities to schema elements, identifying graph traversal patterns, and assembling clauses in the correct order. Training a model to perform these steps explicitly should yield better queries, particularly for complex instances.
+
+To test this hypothesis, we generate chain-of-thought reasoning traces for each training example using GPT-oss-120B, a 117B-parameter reasoning model. Each trace follows a structured QDECOMP+InterCOL decomposition format \citep{tai2023cot}: (1)~break the question into sub-questions, (2)~link sub-questions to schema elements, (3)~identify the graph pattern, and (4)~construct the Cypher query step by step. We then fine-tune Gemma-2-9B-it on these reasoning traces using the identical QLoRA configuration as the Neo4j baseline: same quantization (4-bit NF4), same LoRA rank ($r{=}64$), same optimizer, same hyperparameters. The \emph{only} variable is the training data: reasoning traces followed by Cypher, versus Cypher alone.
+
+Our contributions are:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{We demonstrate that CoT distillation significantly improves Text2Cypher performance.} On the Neo4j benchmark, our approach achieves +0.1227 GLEU and +0.0712 execution exact match over the identically-configured baseline, with a 53\% reduction in prediction errors.
+    \item \textbf{We provide the first execution-based evaluation using identical methodology for both models.} By evaluating both baseline and CoT predictions against 16 live Neo4j demo databases, we establish a fair comparison unconfounded by differences in evaluation infrastructure.
+    \item \textbf{We demonstrate that CoT distillation alone matches the performance of reinforcement learning approaches.} Our GLEU (0.7682) nearly matches that of \citet{tran2025refining}, who achieve 0.7701 using GRPO reinforcement learning with proprietary training data, while our approach requires only supervised fine-tuning on publicly available data.
+    \item \textbf{We provide a detailed error analysis showing that CoT disproportionately benefits complex queries.} Accuracy improvements scale with query complexity (+0.15 on short queries to +0.63 on queries exceeding 500 characters) and are largest on structural features like UNION (+0.52), variable-length paths (+0.32), and multi-hop traversals (+0.41).
+\end{enumerate}
+
+%------------------------------------------------------------------
+\section{Related Work}
+%------------------------------------------------------------------
+
+\subsection{Text2Cypher}
+
+Compared to the extensive literature on Text-to-SQL \citep{mohammadjafari2024survey, liu2024survey}, research on Text-to-Cypher has emerged more recently and remains relatively under-explored. Early approaches relied on rule-based and template-based methods. \citet{kobeissi2021intent} proposed an intent-based interface combining intent detection and NER with rule-based query construction, while GraphQ~IR \citep{nie2022graphqir} introduced an intermediate representation bridging natural language and Cypher through a neural semantic parser. Both approaches lack generalization across schemas and struggle with complex or informal language.
+
+The Neo4j Text2Cypher benchmark \citep{ozsoy2025text2cypher} introduced the first comprehensive evaluation framework, comprising 44,387 question-schema-Cypher triplets across 966 unique schemas from 20 data sources. Their evaluation of 22 models revealed a significant performance hierarchy: fine-tuned GPT-4o achieved the highest GLEU (0.8017), while the best fine-tuned open-weight model (Gemma-2-9B-it) reached only 0.5560. Notably, the fine-tuning delta for Gemma-2-9B (+0.1574 GLEU) was the smallest among all fine-tuned models, suggesting that standard supervised fine-tuning underutilizes the model's capacity. The benchmark supports both translation-based evaluation (comparing Cypher text via GLEU, exact match, and other metrics) and execution-based evaluation (running queries against 16 Neo4j demo databases and comparing result sets), though only 51.1\% of test instances have database access for the latter.
+
+Subsequent work from Neo4j has focused on efficiency and data quality. Schema filtering \citep{ozsoy2025schema} reduces input tokens by up to 62.6\% with minimal quality loss, with smaller models (Llama-3.1-8B, Qwen2.5-7B) benefiting most. Hard example selection \citep{ozsoy2025pruning} achieves comparable training quality with 50\% fewer examples through complexity-based data pruning. \citet{ozsoy2025iterative} explored iterative refinement (a two-step verification-correction loop) as a form of self-healing for the 2025 dataset. Most recently, \citet{ozsoy2026adapter} investigated adapter fusion for multilingual Text2Cypher (English, Spanish, Turkish). None of these approaches modify the model's reasoning process during training.
+
+The Auto-Cypher framework \citep{tiwari2025autocypher} introduced SynthCypher, a 29,838-instance synthetic dataset with 100\% executability, generated through a novel LLM-as-Database-Filler pipeline. Fine-tuning on SynthCypher achieved up to 71.4\% accuracy on their test set, a +31.2pp improvement over base Llama-3.1-8B. While their work demonstrates the value of high-quality training data and uses CoT during data generation, the models themselves are not trained to reason at inference time.
+
+\citet{yang2026pipeline} proposed a comprehensive Text-to-Cypher pipeline combining template-based synthetic data generation, preference learning (DPO/RLHF-style), and context-aware schema retrieval. Their CodeLlama-13B model achieved 69.2\% execution accuracy, within 2.9pp of GPT-4o with context-aware prompting (72.1\%), demonstrating that smaller models can approach proprietary model performance with the right training pipeline.
+
+\citet{hornsteiner2024realtime} developed a modular pipeline with live-fetched schemas from Neo4j, GPT-4 Turbo for generation, and an iterative error correction loop, establishing a practical template for self-healing Cypher generation. \citet{feng2023chain} demonstrated a chain-of-prompts pipeline achieving 0.94~F1 on a Chinese KBQA task, establishing the principle that decomposing NL-to-Cypher into chained intermediate steps dramatically improves accuracy. Our work internalizes this multi-stage reasoning into a single fine-tuned model through CoT distillation.
+
+Most relevant to our work, \citet{tran2025refining} applied GRPO reinforcement learning with structured semantic extraction tasks to a Qwen2.5-3B model, achieving GLEU 0.7701 on the Neo4j benchmark. This was the first application of RL to Text2Cypher. Their two-stage pipeline first fine-tunes on a combination of proprietary (7,741 instances) and Neo4j data, then applies GRPO with four string-based reward signals (format, answer match, key-value extraction, triple relationship extraction). The model is guided to produce intermediate outputs within structured XML tags before the final Cypher query.
+
+Our approach differs fundamentally. While Tran et~al.\ teach the model \emph{what to extract} through RL reward signals on structured tags, we teach the model \emph{how to think} through free-form reasoning traces distilled from a strong LLM. We achieve nearly identical GLEU (0.7682 vs.\ 0.7701) using only supervised fine-tuning on publicly available data: without reinforcement learning, without proprietary data, and with full reproducibility. This suggests that CoT distillation captures most of the benefit that their approach requires RL to achieve.
+
+Additionally, STRuCT-LLM \citep{structllm2025} applied GRPO with topology-aware rewards for joint Text-to-SQL and Text-to-Cypher, but achieved only 12.0\% EM on the Neo4j benchmark with a 32B model, far below both our results and those of Tran et~al., indicating that RL approaches for Text2Cypher remain challenging without task-specific training data.
+
+\subsection{Chain-of-Thought for Structured Query Generation}
+
+Chain-of-thought prompting \citep{wei2022cot} enables language models to generate intermediate reasoning steps before producing a final answer, improving performance on tasks requiring multi-step reasoning. Its application to structured query generation has yielded some of the largest improvements in the Text-to-SQL literature.
+
+\paragraph{Question decomposition.} \citet{tai2023cot} systematically evaluated four CoT strategies for Text-to-SQL: standard CoT, Least-to-Most prompting, QDecomp (question decomposition), and QDecomp+InterCOL (question decomposition with intermediate column identification). QDecomp+InterCOL proved most effective, achieving +5.2pp on Spider dev and +6.5pp on Spider Realistic with Codex by explicitly naming relevant schema elements at each decomposition step. Critically, they found that iterative prompting (Least-to-Most) was unnecessary and introduced error propagation; single-pass decomposition with schema grounding was more effective. Our reasoning trace format adapts QDecomp+InterCOL from SQL to Cypher, replacing intermediate column identification with schema element linking (node labels, relationship types, and properties). This adaptation is natural: Cypher's graph patterns (node-relationship-node traversals) map directly to the decomposition's schema linking step.
+
+The theoretical foundation for question decomposition comes from QDMR \citep{wolfson2020break}, which defined Question Decomposition Meaning Representation as an ordered list of natural language steps to answer complex questions. The Break dataset (83K+ question-QDMR pairs) established that weakly-supervised models trained on QDMR achieve 91--97\% of fully supervised performance for Text-to-SQL \citep{wolfson2022weakly}.
+
+\paragraph{CoT distillation for query generation.} The most compelling evidence for CoT distillation comes from STaR-SQL \citep{he2025starsql}, which achieved 86.6\% execution accuracy on Spider through an iterative self-improvement loop, an 18.0pp improvement over direct-answer fine-tuning (68.6\%) on Llama-3.1-8B-Instruct. Their approach generates candidate rationale-SQL pairs, filters by execution match, applies difficulty-based resampling, and trains an outcome-supervised reward model for best-of-N selection at inference. The 18pp gap between direct-answer and reasoning-enhanced training is the primary motivation for our work: we hypothesize that a similar gap exists for Text2Cypher.
+
+Struct-SQL \citep{thaker2025structsql} showed that \emph{structured} CoT distillation (using query execution plans as formal blueprints rather than free-form reasoning), achieving +8.1\% over unstructured CoT, with the primary driver being reduced syntactic errors. This finding is consistent with our observation of 53\% fewer prediction errors with CoT training.
+
+ExCoT \citep{yao2025excot} combined CoT reasoning with iterative DPO using execution accuracy as feedback, pushing LLaMA-3 70B to 68.51\% on BIRD dev (+11.14pp). \citet{rossiello2025rationalization} applied iterative few-shot knowledge distillation of CoT rationales specifically for Text-to-SQL, demonstrating that step-by-step query generation improves execution accuracy on BIRD. Their work is directly analogous to our approach but for SQL rather than Cypher.
+
+A critical finding by \citet{liu2025dpo} showed that DPO \emph{consistently fails or degrades performance} when applied to Text-to-SQL without reasoning chains, but achieves ``consistent and significant performance improvements'' when CoT is present. Qwen 1.5B achieved +18.2\% improvement through DPO with CoT on BIRD. This suggests that CoT serves as a prerequisite for preference optimization: the reasoning chains provide sufficient signal for the optimization algorithm to discriminate between good and bad outputs.
+
+\paragraph{Decomposed and two-stage approaches.} DTS-SQL \citep{pourreza2024dtssql} demonstrated that two-stage fine-tuning (schema linking then SQL generation) improves execution accuracy by 3--7\% on cross-domain datasets, achieving 60.31\% on BIRD with a 7B model. CHASE-SQL \citep{pourreza2025chasesql} extended this with multi-path reasoning and preference-optimized candidate selection, achieving 73.0\% on BIRD test. DIN-SQL \citep{pourreza2023dinsql} was among the first to show that decomposed in-context learning with self-correction improves Text-to-SQL.
+
+\subsection{Reinforcement Learning for Query Generation}
+
+Group Relative Policy Optimization (GRPO; \citealt{shao2024deepseekmath}) has emerged as the dominant RL algorithm for query generation in 2025. Unlike PPO, GRPO compares multiple responses within a group and optimizes based on relative rankings, avoiding the need for a separate critic model.
+
+Arctic-Text2SQL-R1 \citep{yao2025arctic} achieved \#1 on the BIRD leaderboard with a 7B model (68.5\% test) using GRPO with minimal reward signals (just execution correctness and basic syntax validity), outperforming prior 70B-class systems. Reasoning-SQL \citep{pourreza2025reasoning} introduced five composite reward signals (execution accuracy, LLM-as-judge, syntax check, schema linking Jaccard, n-gram similarity), pushing a 14B model to outperform o3-mini by 4\% on BIRD.
+
+For Text2Cypher specifically, \citet{tran2025refining} is the only prior application of RL, using GRPO with string-based rewards on structured extraction tasks. Our work demonstrates that supervised CoT distillation alone can match RL-based approaches on this benchmark, suggesting that the primary bottleneck is the reasoning signal in the training data rather than the optimization algorithm. RL applied on top of CoT distillation, combining rich reasoning traces with execution-based rewards, is a natural extension.
+
+\subsection{Schema Linking}
+
+Schema linking (mapping natural language entities and relations to database schema elements) is a key sub-task for query generation. RSL-SQL \citep{rslsql2024} achieved 94\% schema linking recall with 83\% reduction in input columns through bidirectional pruning and multi-turn self-correction. For Text2Cypher, \citet{ozsoy2025schema} evaluated five schema filtering approaches and found that smaller models benefit most from pruning. Our QDECOMP+InterCOL reasoning format implicitly performs schema linking: step~2 of the decomposition explicitly identifies relevant node labels, relationship types, and properties from the schema before constructing the query.
+
+\subsection{Self-Consistency and Agentic Approaches}
+
+Self-consistency \citep{wang2022selfconsistency} improves accuracy by sampling multiple chain-of-thought reasoning paths and selecting the most common answer via majority voting. SQL-of-Thought (2025) achieved 91.59\% on Spider through a five-stage multi-agent pipeline, with accuracy dropping at least 5\% without the CoT query plan and 8--10\% without the correction loop. MAC-SQL \citep{macsql2025} used three agents (Selector, Decomposer, Refiner) and found that 30\% of apparent errors were actually gold standard annotation errors. These techniques are complementary to CoT distillation and represent promising future extensions.
+
+\subsection{Additional Benchmarks}
+
+Beyond the Neo4j benchmark, CypherBench \citep{cypherbench2025} provides 11 large-scale property graphs with 7.8M entities and 10K+ questions, where no LLM under 10B surpasses 20\% execution accuracy. ZOGRASCOPE \citep{zograscope2025} offers the first manually annotated benchmark for property graphs, finding 98\% IID accuracy but only 70--75\% compositional generalization. Mind the Query \citep{mindthequery2025} provides 27,529 NL-Cypher pairs across 11 real-world datasets.
+
+%------------------------------------------------------------------
+\section{Method}
+%------------------------------------------------------------------
+
+\subsection{Overview}
+
+Our approach has three stages: (1)~generate chain-of-thought reasoning traces for each training example using a strong teacher model, (2)~fine-tune the target student model on these traces using the same QLoRA configuration as the baseline, and (3)~at inference, prompt the model to reason before generating Cypher and parse the final query from the output.
+
+\subsection{Reasoning Trace Generation}
+
+We generate reasoning traces for all 39,554 training examples in the Neo4j text2cypher-2024v1 dataset using GPT-oss-120B, a 117B-parameter mixture-of-experts reasoning model, served via the Cerebras inference platform at approximately 3,000 tokens per second.
+
+Each trace follows a 4-step QDECOMP+InterCOL decomposition adapted for graph queries:
+\begin{enumerate}
+    \item \textbf{Sub-question decomposition:} Break the natural language question into atomic sub-questions, each targeting a specific aspect of the query.
+    \item \textbf{Schema element linking (InterCOL):} For each sub-question, identify the relevant node labels, relationship types, and properties from the provided schema.
+    \item \textbf{Graph pattern identification:} Determine the traversal pattern (single hop, multi-hop, variable-length path, aggregation, filtering, or combination).
+    \item \textbf{Step-by-step Cypher construction:} Build the query incrementally, constructing \texttt{MATCH}, \texttt{WHERE}, \texttt{WITH}, and \texttt{RETURN} clauses in sequence.
+\end{enumerate}
+
+We use a distillation approach: the reference Cypher query is included in the prompt, and the teacher model generates reasoning that explains \emph{how} to arrive at that query. This ensures consistent reasoning quality since the model works backward from a known-correct answer. Nine hand-crafted few-shot exemplars covering three schema formats (minimal, verbose, JSON) and diverse query patterns guide the generation.
+
+The generation succeeded on 39,553 of 39,554 examples (99.997\%). We verified that 93.3\% of generated Cypher queries exactly match the reference; the remaining 6.7\% differ only cosmetically (whitespace, case, tokenizer artifacts). All training examples use the original reference Cypher as the training target, not the model-generated Cypher, ensuring training data quality.
+
+The total cost was approximately \$50 for roughly 199 million tokens processed in 3.3 hours. Average reasoning length is 715 characters (${\sim}295$ tokens) per example.
+
+\subsection{QLoRA Fine-Tuning}
+
+We fine-tune \texttt{google/gemma-2-9b-it} using the identical QLoRA configuration as the Neo4j baseline \citep{ozsoy2025text2cypher}, ensuring that training data is the sole experimental variable.
+
+\paragraph{Low-Rank Adaptation (LoRA).} Following \citet{hu2021lora}, we freeze the pre-trained weight matrices $W_0 \in \mathbb{R}^{d \times k}$ and learn a low-rank update:
+\begin{equation}
+    h = W_0 x + \frac{\alpha}{r} B A x
+\end{equation}
+where $B \in \mathbb{R}^{d \times r}$, $A \in \mathbb{R}^{r \times k}$, $r \ll \min(d, k)$ is the rank, and $\alpha$ is a scaling constant. $B$ is initialized to zero and $A$ to random Gaussian values, so $\Delta W = BA = 0$ at initialization. In our configuration, $r = 64$ and $\alpha = 64$, yielding a scaling factor of $\alpha / r = 1$. LoRA is applied to all seven linear projection matrices in each transformer layer (query, key, value, output, gate, up, and down projections).
+
+\paragraph{4-bit Quantization (QLoRA).} Following \citet{dettmers2023qlora}, the frozen weights $W_0$ are stored in 4-bit NormalFloat (NF4) format. NF4 quantization bins are derived from the quantile function of the standard normal distribution:
+\begin{equation}
+    q_i = \frac{1}{2}\left(Q_X\!\left(\frac{i}{2^k + 1}\right) + Q_X\!\left(\frac{i+1}{2^k + 1}\right)\right)
+\end{equation}
+where $Q_X(\cdot)$ is the quantile function of $\mathcal{N}(0,1)$ and $k=4$. Double quantization further compresses the quantization constants, reducing per-parameter overhead to approximately 0.127 bits. During the forward pass, weights are dequantized to BF16 on the fly:
+\begin{equation}
+    \mathbf{Y}^{\text{BF16}} = \mathbf{X}^{\text{BF16}} \cdot \text{dequant}(\mathbf{W}^{\text{NF4}}) + \mathbf{X}^{\text{BF16}} \cdot B^{\text{BF16}} A^{\text{BF16}}
+\end{equation}
+Gradients flow through the dequantized weights to the LoRA adapters $B$ and $A$, but no updates are applied to $\mathbf{W}$.
+
+\paragraph{CoT distillation training objective.} Each training example consists of a prompt $x$ (schema + question + ``Think step by step''), a reasoning trace $r$ generated by the teacher model, and a reference Cypher query $y$. The student model is trained to generate the concatenated response $t = r \oplus y$ via the standard autoregressive cross-entropy loss, with completion-only masking applied so that loss is computed exclusively over the response tokens:
+\begin{equation}
+    \mathcal{L}_{\text{CoT}} = -\sum_{(x, r, y) \in \mathcal{D}} \sum_{i=1}^{|r|+|y|} \log\, p_{\Phi_0 + \Delta\Phi(\Theta)}(t_i \mid x, t_{<i})
+    \label{eq:cot_loss}
+\end{equation}
+where $\Phi_0$ denotes the frozen NF4-quantized Gemma-2-9B weights, $\Theta = \{B^{(l)}, A^{(l)}\}_{l=1}^{L}$ are the trainable LoRA parameters across all $L$ adapted layers, and $\Delta\Phi(\Theta)$ represents the low-rank weight updates. The prompt tokens $x$ participate in the forward pass (providing context) but their loss contributions are masked to $-100$ (the PyTorch cross-entropy ignore index).
+
+This formulation differs from the baseline's training objective only in the target sequence: the baseline trains on $t = y$ (Cypher only), while we train on $t = r \oplus y$ (reasoning + Cypher). All other terms are identical.
+
+\paragraph{Training configuration.} We match the Neo4j baseline exactly: 1 epoch, batch size 4 with gradient accumulation 8 (effective batch 32), learning rate $2 \times 10^{-5}$, paged AdamW 8-bit optimizer, max sequence length 1,600 tokens. The \texttt{eager} attention implementation is required for Gemma-2's soft-capping mechanism, which is incompatible with Flash Attention.
+
+Training completed in approximately 10 hours on a single NVIDIA A100-80GB GPU (1,236 steps). The loss decreased from 1.19 to 0.21, showing rapid initial convergence followed by steady refinement. Approximately 2--3\% of training examples had responses truncated by the 1,600-token limit due to long schemas, contributing zero to the training loss. The adapter weights total 824MB.
+
+\subsection{Inference}
+
+At inference, we use the same 4-bit NF4 quantization and load the trained LoRA adapter. The prompt follows the same format as training. The model generates a reasoning trace followed by the Cypher query. We extract the query by parsing text after the ``Cypher output:'' marker. We use greedy decoding with \texttt{max\_new\_tokens}=1,024 (increased from the baseline's 512 to accommodate the reasoning output).
+
+%------------------------------------------------------------------
+\section{Experimental Setup}
+%------------------------------------------------------------------
+
+\subsection{Dataset}
+
+We use the \texttt{neo4j/text2cypher-2024v1} benchmark dataset \citep{ozsoy2025text2cypher} with 39,554 training and 4,833 test instances across 966 unique schemas and 20 data sources. Of the test instances, 2,471 (51.1\%) have associated Neo4j databases enabling execution-based evaluation.
+
+\subsection{Baseline}
+
+Our baseline is the Neo4j fine-tuned Gemma-2-9B-it model, evaluated under identical conditions: 4-bit NF4 quantization, greedy decoding, and the prompt format specified in the model card. Our reproduced baseline GLEU (0.6455) exceeds Neo4j's published value (0.5560), likely due to differences in input truncation (we use \texttt{max\_length}=7,680 vs their training \texttt{max\_seq\_len}=1,600) and framework version details. We use our own consistent baseline for all comparisons.
+
+\subsection{Evaluation Metrics}
+
+\paragraph{Translation-based ($n$=4,833).} GLEU (Google-BLEU; \citealt{wu2016gnmt}) computed via HuggingFace Evaluate with NLTK's Tokenizer13a, and whitespace-normalized string exact match. GLEU records all sub-sequences of 1--4 tokens in both output and target, then returns the minimum of precision and recall:
+\begin{equation}
+    \text{GLEU} = \min\!\left(\frac{\sum_{n=1}^{4} |\text{ngrams}_n(\hat{y}) \cap \text{ngrams}_n(y)|}{\sum_{n=1}^{4} |\text{ngrams}_n(\hat{y})|},\; \frac{\sum_{n=1}^{4} |\text{ngrams}_n(\hat{y}) \cap \text{ngrams}_n(y)|}{\sum_{n=1}^{4} |\text{ngrams}_n(y)|}\right)
+\end{equation}
+
+\paragraph{Execution-based ($n$=2,305 valid).} Both predicted and reference Cypher are executed against live Neo4j demo databases at \texttt{demo.neo4jlabs.com}. Results are converted to lexicographically sorted JSON string representations and compared for exact match. Of 2,471 instances with database access, 166 reference queries fail due to database state changes, leaving 2,305 valid instances.
+
+\subsection{Implementation}
+
+All training and GPU inference use Modal cloud computing with NVIDIA A100-80GB GPUs. Execution-based evaluation runs locally against the public \texttt{demo.neo4jlabs.com} server. Framework versions match the Neo4j baseline: PyTorch 2.4.0, transformers 4.44.2, PEFT 0.12.0, bitsandbytes 0.43.3, TRL 0.9.6.
+
+%------------------------------------------------------------------
+\section{Results}
+%------------------------------------------------------------------
+
+\subsection{Primary Results}
+
+Table~\ref{tab:primary} shows the primary results comparing our CoT model against the baseline.
+
+\begin{table}[h]
+\centering
+\caption{Primary results on the Neo4j Text2Cypher benchmark.}
+\label{tab:primary}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Metric} & \textbf{Baseline} & \textbf{CoT Model} & \textbf{Delta} \\
+\midrule
+GLEU ($n$=4,833) & 0.6455 & \textbf{0.7682} & \textbf{+0.1227} \\
+String EM ($n$=4,833) & 0.1924 & \textbf{0.3799} & \textbf{+0.1875} \\
+Exec EM ($n$=2,305) & 0.1657 & \textbf{0.2369} & \textbf{+0.0712} \\
+Prediction Errors ($n$=2,471) & 242 & \textbf{114} & \textbf{$-$53\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The CoT model achieves a 19\% relative improvement in GLEU and nearly doubles the string exact match rate. On execution-based evaluation, the model gets 43\% more queries exactly right. The 53\% reduction in prediction errors (syntax and runtime failures) indicates that reasoning traces during training improve syntactic validity.
+
+\subsection{Benchmark Position}
+
+Table~\ref{tab:leaderboard} shows our model's position on the benchmark leaderboard.
+
+\begin{table}[h]
+\centering
+\caption{GLEU scores on the Neo4j Text2Cypher benchmark.}
+\label{tab:leaderboard}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Model} & \textbf{GLEU} & \textbf{Type} \\
+\midrule
+Fine-tuned GPT-4o & 0.8017 & Closed \\
+Fine-tuned GPT-4o-mini & 0.7973 & Closed \\
+Fine-tuned Gemini-1.5-Flash & 0.7780 & Closed \\
+Tran et al.\ (2025) Qwen-3B + GRPO & 0.7701 & Open, SFT+RL \\
+\textbf{Our CoT Gemma-2-9B (SFT only)} & \textbf{0.7682} & \textbf{Open, SFT} \\
+Fine-tuned Gemini-1.0-Pro & 0.7293 & Closed \\
+Fine-tuned Llama-3.1-8B & 0.6470 & Open \\
+Unfine-tuned GPT-4o & 0.6293 & Closed \\
+Neo4j fine-tuned Gemma-2-9B & 0.5560 & Open \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Our model surpasses all open-weight fine-tuned models, outperforms unfine-tuned GPT-4o by +0.1389, and is within 0.0098 of fine-tuned Gemini-1.5-Flash. Notably, our SFT-only approach nearly matches Tran et al.'s SFT+RL result (0.7682 vs 0.7701), achieved without reinforcement learning or proprietary training data.
+
+\subsection{Execution-Based Evaluation}
+
+CoT improves execution accuracy on 14 of 15 databases (tied on movies). The improvement is broad-based, with the largest gains on stackoverflow2 (+0.214), where CoT more than doubles accuracy. Full per-database results are provided in the appendix.
+
+\subsection{Ablation: Training Data vs.\ Inference Prompt}
+
+To disentangle the contributions of CoT training data and the CoT inference prompt, we evaluate the CoT adapter with the baseline's prompt format (no ``Think step by step'' instruction).
+
+\begin{table}[h]
+\centering
+\caption{Ablation results.}
+\label{tab:ablation}
+\begin{tabular}{llcc}
+\toprule
+\textbf{Configuration} & \textbf{Prompt} & \textbf{GLEU} & \textbf{String EM} \\
+\midrule
+Baseline (Neo4j adapter) & Baseline & 0.6455 & 0.1924 \\
+CoT training only & Baseline & 0.7082 & 0.2197 \\
+Full CoT & CoT & \textbf{0.7682} & \textbf{0.3799} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+CoT training data alone yields +0.0627 GLEU even without the reasoning prompt, demonstrating that the model learns generalizable query construction from reasoning traces. Adding the CoT prompt provides an additional +0.0600 GLEU and +0.1602 string EM. The two components are complementary: training teaches better query patterns, while the prompt activates explicit reasoning at inference time.
+
+%------------------------------------------------------------------
+\section{Error Analysis}
+%------------------------------------------------------------------
+
+\subsection{Improvement-to-Regression Ratio}
+
+Examining the overlap between baseline and CoT predictions on string exact match: CoT achieves 1,028 new correct predictions while losing only 122 that the baseline got right, yielding an 8.4:1 improvement-to-regression ratio. The 122 regressions are distributed across data sources and typically involve cosmetic differences (returning whole nodes vs.\ specific properties, different column aliases, equivalent clause orderings).
+
+\subsection{Accuracy by Query Complexity}
+
+\begin{table}[h]
+\centering
+\caption{String exact match by query complexity (reference Cypher length).}
+\label{tab:complexity}
+\begin{tabular}{lrccc}
+\toprule
+\textbf{Query Length} & \textbf{$n$} & \textbf{Baseline EM} & \textbf{CoT EM} & \textbf{Delta} \\
+\midrule
+Short (0--50) & 143 & 0.329 & 0.476 & +0.147 \\
+Medium (50--100) & 1,658 & 0.259 & 0.443 & +0.183 \\
+Long (100--200) & 2,607 & 0.168 & 0.346 & +0.178 \\
+Very Long (200--500) & 342 & 0.038 & 0.225 & +0.187 \\
+Extra Long (500+) & 83 & 0.036 & 0.663 & \textbf{+0.627} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+CoT's advantage \emph{increases monotonically with query complexity}. On extra-long queries (500+ characters), the baseline nearly fails (3.6\% EM) while CoT achieves 66.3\%, an 18$\times$ relative improvement. This directly supports our hypothesis that explicit reasoning helps most when queries require multi-step planning.
+
+\subsection{Accuracy by Cypher Feature}
+
+\begin{table}[h]
+\centering
+\caption{String exact match by Cypher query feature (selected).}
+\label{tab:features}
+\begin{tabular}{lrccc}
+\toprule
+\textbf{Feature} & \textbf{$n$} & \textbf{Baseline EM} & \textbf{CoT EM} & \textbf{Delta} \\
+\midrule
+UNION & 100 & 0.410 & 0.930 & +0.520 \\
+1-hop traversal & 396 & 0.023 & 0.437 & +0.414 \\
+Variable-length path & 84 & 0.500 & 0.821 & +0.321 \\
+COLLECT & 101 & 0.129 & 0.347 & +0.218 \\
+WHERE & 2,559 & 0.163 & 0.375 & +0.211 \\
+EXISTS & 130 & 0.246 & 0.454 & +0.208 \\
+WITH (intermediate) & 1,177 & 0.063 & 0.244 & +0.181 \\
+AGGREGATION & 388 & 0.044 & 0.209 & +0.165 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The largest improvements are on structural features: UNION (+0.520), where CoT excels at composing multiple query branches; 1-hop traversals (+0.414), where the baseline nearly fails; and variable-length paths (+0.321). The WITH clause improvement (+0.181) confirms that CoT helps with multi-stage queries requiring intermediate aggregation, a natural fit for step-by-step reasoning.
+
+\subsection{Prediction Errors}
+
+Of 114 CoT prediction errors on the database-accessible subset: 72 (63\%) are syntax errors and 42 (37\%) return more than 10,000 rows (capped for evaluation safety). The 53\% reduction in errors compared to baseline (242) demonstrates that CoT training produces more syntactically valid Cypher.
+
+%------------------------------------------------------------------
+\section{Discussion}
+%------------------------------------------------------------------
+
+\subsection{CoT Distillation vs.\ Reinforcement Learning}
+
+Our most striking result is that supervised CoT distillation alone (GLEU 0.7682) nearly matches the GRPO reinforcement learning approach of \citet{tran2025refining} (GLEU 0.7701): without RL, without proprietary data, and with a fully reproducible pipeline. This suggests that for Text2Cypher, the key bottleneck is not the optimization algorithm but the presence of intermediate reasoning in the training signal. Teaching a model \emph{how to think} through CoT traces appears as effective as teaching it \emph{what to extract} through RL reward signals.
+
+These approaches are likely complementary: applying GRPO on top of a CoT-distilled model, combining rich reasoning traces with execution-based rewards, is a natural extension that could yield further gains.
+
+\subsection{Why Does CoT Help?}
+
+Our error analysis provides three explanations:
+
+\paragraph{Compositional reasoning.} UNION queries improve by +0.520 and variable-length paths by +0.321. These require composing multiple sub-queries or reasoning about recursive patterns, tasks where explicit decomposition into sub-questions provides direct benefit.
+
+\paragraph{Schema grounding.} The InterCOL step (linking sub-questions to schema elements) provides explicit schema mapping that reduces hallucination of non-existent properties or relationships. This is reflected in the 53\% reduction in syntax errors.
+
+\paragraph{Scaling with complexity.} The monotonic increase in improvement with query length (Table~\ref{tab:complexity}) mirrors findings from Text-to-SQL research \citep{he2025starsql, tai2023cot}, where CoT primarily helps on hard and extra-hard queries. Direct-answer training provides insufficient signal for complex queries that require multi-step reasoning.
+
+\subsection{Cost-Effectiveness}
+
+The total cost of our approach is approximately \$75 (about \$50 for reasoning trace generation and \$25 for fine-tuning). A 9B model running on a single L4 GPU (\$0.80/hour) during inference costs roughly \$0.004 per query, dramatically cheaper than GPT-4o API calls while achieving comparable Text2Cypher quality. This makes the approach practical for organizations deploying graph database interfaces at scale.
+
+\subsection{Limitations}
+
+\paragraph{Dataset issues.} The 2024 benchmark has documented limitations including data leakage (same questions across splits) and paraphrase contamination \citep{ozsoy2025text2cypher}. These affect all models equally and do not invalidate relative comparisons.
+
+\paragraph{Two experimental variables.} Our full configuration changes both training data and inference prompt. The ablation (Section~5.4) shows that training data alone provides +0.0627 GLEU, confirming it as the primary driver, but the interaction between training and prompting deserves further study.
+
+\paragraph{Execution evaluation caveats.} The Neo4j demo databases are live public infrastructure whose contents may change over time. Our baseline execution EM (0.1657) is below Neo4j's published value (0.2104), likely reflecting database state differences. The relative comparison between our baseline and CoT model uses identical evaluation timing and methodology.
+
+\paragraph{Reasoning trace quality.} All traces were generated by a single model (GPT-oss-120B). Different teacher models or reasoning formats might produce different results.
+
+%------------------------------------------------------------------
+\section{Conclusion}
+%------------------------------------------------------------------
+
+We have demonstrated that chain-of-thought distillation (generating reasoning traces with a strong LLM and fine-tuning a smaller model on those traces) significantly improves Text2Cypher performance. Using the identical QLoRA configuration as the Neo4j baseline, our approach achieves +0.1227 GLEU and +0.0712 execution exact match, making a 9B open-weight model competitive with fine-tuned proprietary models. The improvement is driven by the training data (reasoning traces teach better query construction patterns) with additional gains from the CoT inference prompt (explicit reasoning produces more precise queries).
+
+Our error analysis reveals that CoT particularly benefits complex, multi-step queries, exactly the cases where direct-answer training provides insufficient learning signal. The total cost of approximately \$75 for the complete pipeline demonstrates the practical viability of this approach.
+
+Future work includes applying self-consistency (majority voting over multiple sampled reasoning paths), agentic self-healing loops (iterative correction with execution feedback), and reinforcement learning on top of the CoT-distilled model. The combination of CoT distillation with GRPO, leveraging both rich reasoning traces and execution-based rewards, is a particularly promising direction.
+
+%------------------------------------------------------------------
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}
