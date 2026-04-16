@@ -1276,3 +1276,102 @@ Cypher output: MATCH (p:Person)-[:ACTED_IN]->(m:Movie) WHERE p.name = "John" RET
 - Alliance Canada: https://docs.alliancecan.ca/wiki/Getting_started
 - HuggingFace Evaluate: https://huggingface.co/docs/evaluate/index
 - HuggingFace pricing: https://huggingface.co/pricing
+
+---
+
+## Advisor Feedback (Professor Alex, April 2026)
+
+### Assessment Summary
+
+Paper is well-executed with clean experimental design. The controlled setup (same QLoRA config, only training data differs) is a strength reviewers would appreciate. Results are strong: #4 on GLEU leaderboard, SFT-only matching RL approach, thorough error analysis.
+
+### Venue Assessment
+
+| Venue | Chance | Notes |
+|-------|--------|-------|
+| ACL main | ~10-15% | Needs stronger methodological story |
+| EMNLP main | ~15-20% | Possible with "SFT matches RL" angle |
+| **ACL/EMNLP Findings** | **~35-45%** | **Best realistic target as-is** |
+| NAACL main | ~25-30% | Good domain fit |
+| COLING / LREC-COLING | ~50%+ | Neo4j baseline paper was at GenAIK@COLING |
+| Workshops | ~60-70% | Very likely accepted |
+
+### Key Weaknesses Identified
+
+1. **Limited methodological novelty** -- CoT distillation for queries is well-explored in Text-to-SQL. This reads as "applying known technique to new domain." Mitigation: frame as empirical contribution, emphasize "SFT matches RL" finding.
+2. **Single benchmark, single model** -- No evidence of transfer to CypherBench/ZOGRASCOPE or other model families (Llama, Qwen).
+3. **Incomplete ablation suite** -- Self-consistency, few-shot, self-healing, RL all listed as "pending funding."
+4. **Two confounded variables** -- Training data + inference prompt both changed. Ablation partially addresses but reverse ablation missing.
+5. **Baseline GLEU discrepancy** -- Our 0.6455 vs Neo4j's published 0.5560. Leaderboard mixes our numbers with their published numbers.
+6. **2024 dataset limitations** -- Known data leakage/paraphrase contamination. Should justify more prominently why not using cleaner 2025 dataset.
+
+### Five Deeper Angles to Strengthen the Paper
+
+The professor identified that "we applied CoT to Cypher and it worked" is the weakest framing. The data already contains surprising findings that should be the story:
+
+#### Angle 1: Compositional Generalization for Graph Pattern Matching
+- CoT specifically fixes compositional failures: UNION +0.52, VAR_LENGTH_PATH +0.32, WITH +0.18, Extra-long +0.63
+- ZOGRASCOPE showed 98% IID but only 70-75% compositional generalization -- the hard problem for Cypher
+- **Reframing:** "CoT teaches models to compose graph patterns they already know individually"
+- **Action needed:** Run on ZOGRASCOPE with IID vs compositional vs length splits
+
+#### Angle 2: The 1-Hop Paradox -- Schema Grounding as Constraint Satisfaction
+- Baseline is WORST on EASIEST queries: 2.3% EM on 1-hop vs 19.7% on 2-hop
+- CoT's biggest improvement is on 1-hop (+41.4%), not harder ones
+- **Explanation:** 1-hop queries have no structural cues to disambiguate relationship types. The model must read the schema. 2-hop gives more structural clues (intermediate node disambiguates).
+- CoT forces explicit schema reading in step 2 (InterCOL), which is **implicit constraint satisfaction**
+- **Action needed:** Categorize 1-hop queries by schema ambiguity (number of relationship types between node pairs). If CoT improvement correlates with ambiguity, we have a mechanistic explanation. **No new model runs needed -- just re-analyze existing predictions against schemas.**
+
+#### Angle 3: Latent vs Active Reasoning -- Two Mechanisms of Knowledge Distillation
+- Our ablation shows two separable mechanisms:
+  - **Latent learning** (CoT training, baseline prompt): +0.0627 GLEU, +0.0273 EM
+  - **Active reasoning** (adding CoT prompt): +0.0600 GLEU, +0.1602 EM
+- GLEU splits ~50/50 between mechanisms, but exact match is 94% driven by active reasoning
+- **Practical implication:** If approximate queries suffice (search/retrieval), skip reasoning at inference for 3-4x speedup. If exact queries needed, use full reasoning.
+- **Action needed:** None -- already in the data. Just reframe and emphasize. Add cost-accuracy tradeoff curve.
+
+#### Angle 4: When Does Distillation Make RL Redundant?
+- Our SFT-only matches Tran et al.'s SFT+RL (0.7682 vs 0.7701)
+- **Hypothesis:** SQL has many equivalent query forms (subqueries, CTEs, joins) so RL adds value by exploring alternatives. Cypher is more declarative with fewer equivalent forms, so distillation already covers the solution space.
+- **Prediction:** RL on top of CoT should help MORE on ambiguous queries (multiple valid MATCH patterns) and LESS on unambiguous ones.
+- **Action needed:** Run GRPO on CoT model and analyze WHERE gains come from. Even without running RL, could do theoretical analysis of SQL vs Cypher output space ambiguity.
+
+#### Angle 5: Graph Reasoning Primitives Taxonomy
+- Per-feature results rank reasoning types by CoT benefit:
+  - **High:** Pattern composition (UNION +0.52), schema grounding (1-hop +0.41), recursive patterns (VAR_LENGTH +0.32)
+  - **Medium:** Existence checks (EXISTS +0.21), set operations (DISTINCT +0.19), aggregation (+0.17)
+  - **Low:** Ordering (ORDER BY +0.09), limiting (LIMIT +0.08)
+- Maps to graph theory: subgraph isomorphism (hard) > counting (medium) > formatting (trivial)
+- **CoT teaches graph-structural reasoning, NOT surface formatting**
+- **Action needed:** Formalize taxonomy, connect to graph theory concepts. Analysis only.
+
+### Recommended Title Reframings
+
+1. "Compositional Generalization in Graph Query Generation through Reasoning Distillation"
+2. "When Distillation Makes RL Redundant: Chain-of-Thought for Text-to-Cypher"
+3. **"Schema Grounding and Pattern Composition: What Chain-of-Thought Actually Teaches for Graph Query Generation"** (strongest)
+
+### Priority Actions (Ordered by Impact-to-Effort)
+
+**No compute needed (do immediately):**
+1. Angle 2: 1-hop paradox schema ambiguity analysis (re-analyze existing predictions)
+2. Angle 3: Reframe latent vs active reasoning with cost-accuracy tradeoff
+3. Angle 5: Formalize graph reasoning primitives taxonomy
+
+**Cheap compute:**
+4. Self-consistency (run inference N times with temperature, majority vote) -- highest expected impact on numbers
+5. ZOGRASCOPE benchmark (Angle 1) -- run inference on new benchmark, no training needed
+
+**Moderate compute:**
+6. Second model family (Llama-3.1-8B or Qwen2.5-7B) -- same CoT pipeline, different base model
+7. GRPO on top of CoT model (Angle 4) -- RL training
+
+### Strategic Timeline
+
+- **1-2 months:** Submit as-is to EMNLP/ACL Findings or NAACL. Paper is complete and polished.
+- **2-3 months:** Add self-consistency + ZOGRASCOPE. Makes EMNLP main realistic.
+- **3-6 months:** Add self-consistency + second benchmark + second model + RL. Strong shot at ACL/EMNLP main.
+
+### Strongest Narrative (from advisor)
+
+> "We show that teaching a model HOW to think (CoT distillation, $75 SFT) is as effective as teaching it WHAT to extract (RL with proprietary data), and that the two approaches are complementary."

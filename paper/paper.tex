@@ -12,7 +12,7 @@
 
 \geometry{margin=1in}
 
-\title{Teaching Small Models to Think: Chain-of-Thought Distillation\\for Text-to-Cypher Query Generation}
+\title{Schema Grounding and Pattern Composition:\\What Chain-of-Thought Actually Teaches\\for Graph Query Generation}
 \author{Cyrus Parsons}
 \date{}
 
@@ -20,7 +20,7 @@
 \maketitle
 
 \begin{abstract}
-We present a chain-of-thought (CoT) distillation approach for improving Text-to-Cypher query generation on the Neo4j Text2Cypher benchmark. By generating step-by-step reasoning traces with a strong language model (GPT-oss-120B) and fine-tuning a smaller model (Gemma-2-9B-it) on these traces, we achieve GLEU 0.7682 and execution exact match 0.2369: improvements of +0.1227 GLEU and +0.0712 execution EM over the same model fine-tuned on direct-answer data. Our approach uses the identical QLoRA configuration as the Neo4j baseline, isolating training data as the sole experimental variable. The resulting 9B open-weight model surpasses all other open-weight models on the benchmark, outperforms unfine-tuned GPT-4o, and is competitive with fine-tuned GPT-4o-mini (GLEU 0.7973). An ablation study confirms that CoT training data alone provides +0.0627 GLEU improvement, with the CoT inference prompt contributing an additional +0.0600. Error analysis reveals that CoT particularly benefits complex queries: accuracy improves by +0.63 on queries exceeding 500 characters and by +0.52 on UNION queries. The total cost of the approach is approximately \$75 for data generation and training, with inference at roughly \$0.004 per query on a single consumer GPU, demonstrating that reasoning-enhanced fine-tuning is a practical and cost-effective method for closing the gap between small open-weight models and proprietary systems on structured query generation tasks.
+Chain-of-thought (CoT) distillation is known to improve structured query generation, but \emph{what} does it actually teach? We investigate this question through Text-to-Cypher generation on the Neo4j benchmark, training Gemma-2-9B-it on reasoning traces distilled from GPT-oss-120B using the identical QLoRA configuration as the Neo4j baseline (isolating training data as the sole variable). Our model achieves GLEU 0.7682 (+0.1227) and execution exact match 0.2369 (+0.0712), surpassing all open-weight models and matching a concurrent RL-based approach (0.7701 GLEU) that requires GRPO and proprietary data, with SFT alone at approximately \$75 total cost. Detailed analysis reveals three findings beyond the benchmark numbers. First, CoT's advantage scales monotonically with query complexity (+0.15 on short queries to +0.63 on 500+ character queries) and is concentrated on graph-structural operations (UNION +0.52, variable-length paths +0.32) rather than syntactic formatting (ORDER BY +0.09). Second, a ``1-hop paradox'': the baseline fails most severely on the simplest traversals (2.3\% EM on 1-hop vs 19.7\% on 2-hop), because these queries combine traversal with aggregation features that the model cannot compose without explicit reasoning. Third, CoT distillation operates through two separable mechanisms: \emph{latent learning} (training on traces improves query quality even without reasoning at inference, providing 51\% of GLEU gains at no extra cost) and \emph{active reasoning} (explicit inference-time reasoning provides 85\% of exact match gains at ${\sim}$7x output cost). These findings suggest that CoT teaches graph-structural reasoning and schema grounding, not general carefulness, with practical implications for when to deploy each mechanism.
 \end{abstract}
 
 %------------------------------------------------------------------
@@ -328,6 +328,47 @@ The largest improvements are on structural features: UNION (+0.520), where CoT e
 
 Of 114 CoT prediction errors on the database-accessible subset: 72 (63\%) are syntax errors and 42 (37\%) return more than 10,000 rows (capped for evaluation safety). The 53\% reduction in errors compared to baseline (242) demonstrates that CoT training produces more syntactically valid Cypher.
 
+\subsection{The 1-Hop Paradox}
+
+A surprising finding is that the baseline performs \emph{worst} on the \emph{simplest} traversals. On 1-hop queries (a single node-relationship-node traversal), the baseline achieves only 2.3\% EM, compared to 19.7\% on 2-hop and 27.2\% on 0-hop queries. CoT's largest improvement is correspondingly on 1-hop (+0.414).
+
+This paradox holds within the \texttt{functional\_cypher} data source (eliminating cross-source confounds): the baseline gets 49.3\% on 0-hop and 50.6\% on 2-hop, but only 3.8\% on 1-hop. Analysis reveals that 1-hop queries in this dataset disproportionately combine traversal with aggregation features: 34.4\% have WITH clauses (vs.\ 14.4\% for 2-hop), 25.8\% have DISTINCT (vs.\ 17.7\%), and 32.8\% have COUNT. For 1-hop queries \emph{with} WITH clauses, the baseline achieves 0.0\% EM.
+
+The baseline can handle traversals (2-hop: 50.6\%) and node-only aggregation (0-hop: 49.3\%) separately, but fails when both are required in a single query. CoT resolves this through explicit compositional reasoning: step~3 identifies the traversal pattern, then step~4 constructs the aggregation logic separately, composing them in sequence. This mirrors how compositional generalization works: learn primitives, then learn to compose them.
+
+\subsection{Latent vs.\ Active Reasoning}
+
+Our ablation reveals that CoT distillation operates through two separable mechanisms:
+
+\begin{table}[h]
+\centering
+\caption{Cost-accuracy tradeoff of latent vs.\ active reasoning.}
+\label{tab:latent_active}
+\begin{tabular}{lcccr}
+\toprule
+\textbf{Configuration} & \textbf{GLEU} & \textbf{String EM} & \textbf{Output Tokens} & \textbf{Cost} \\
+\midrule
+Baseline & 0.6455 & 0.1924 & ${\sim}$39 & 1.0x \\
+Latent (CoT train, baseline prompt) & 0.7082 & 0.2197 & ${\sim}$36 & ${\sim}$1.0x \\
+Active (CoT train + CoT prompt) & \textbf{0.7682} & \textbf{0.3799} & ${\sim}$247 & ${\sim}$6.9x \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Latent learning} (training on reasoning traces without prompting reasoning at inference) provides 51\% of the total GLEU improvement at no additional inference cost. The model internalizes better query construction patterns from the reasoning traces, producing them instinctively. \textbf{Active reasoning} (adding the CoT prompt) provides the remaining 49\% of GLEU improvement but 85\% of the exact match improvement, at ${\sim}$6.9x inference cost. Getting queries \emph{exactly} right requires explicit step-by-step reasoning; getting them \emph{approximately} right can be learned implicitly.
+
+\subsection{Graph Reasoning Primitives Taxonomy}
+
+The per-feature results (Table~\ref{tab:features}) reveal a principled hierarchy of graph reasoning operations:
+
+\begin{itemize}[leftmargin=*]
+\item \textbf{Tier 1 -- Graph-structural reasoning (high CoT benefit):} Pattern composition (UNION: +0.52), schema-constrained edge selection (1-hop: +0.41), recursive traversal (variable-length path: +0.32). These involve subgraph isomorphism and reachability, fundamentally hard problems where explicit decomposition is essential.
+\item \textbf{Tier 2 -- Semantic reasoning (medium):} Existence testing (EXISTS: +0.21), duplicate elimination (DISTINCT: +0.19), multi-stage chaining (WITH: +0.18), aggregation (+0.17). These benefit from reasoning but can sometimes be handled by learned heuristics.
+\item \textbf{Tier 3 -- Syntactic formatting (low):} Result ordering (ORDER BY: +0.09), truncation (LIMIT: +0.08). These require only syntax recall, no structural reasoning.
+\end{itemize}
+
+This taxonomy suggests that CoT specifically teaches \emph{graph-structural reasoning}, not general carefulness. The model learns to decompose complex graph patterns into composable primitives rather than simply generating more tokens before answering.
+
 %------------------------------------------------------------------
 \section{Discussion}
 %------------------------------------------------------------------
@@ -338,15 +379,15 @@ Our most striking result is that supervised CoT distillation alone (GLEU 0.7682)
 
 These approaches are likely complementary: applying GRPO on top of a CoT-distilled model, combining rich reasoning traces with execution-based rewards, is a natural extension that could yield further gains.
 
-\subsection{Why Does CoT Help?}
+\subsection{What Does CoT Actually Teach?}
 
-Our error analysis provides three explanations:
+Our error analysis provides three mechanistic explanations, each supported by specific evidence:
 
-\paragraph{Compositional reasoning.} UNION queries improve by +0.520 and variable-length paths by +0.321. These require composing multiple sub-queries or reasoning about recursive patterns, tasks where explicit decomposition into sub-questions provides direct benefit.
+\paragraph{Compositional reasoning over graph primitives.} The 1-hop paradox (Section~6.5) and UNION results (+0.520) demonstrate that CoT teaches models to \emph{compose} graph operations they can perform individually. The baseline can do traversals or aggregations separately but fails on their combination. CoT's step-by-step decomposition mirrors compositional generalization: primitives are learned, then composed via explicit reasoning. ZOGRASCOPE \citep{zograscope2025} found that this compositional gap (98\% IID vs.\ 70-75\% compositional accuracy) is the primary challenge for Cypher generation, suggesting our findings address the field's central bottleneck.
 
-\paragraph{Schema grounding.} The InterCOL step (linking sub-questions to schema elements) provides explicit schema mapping that reduces hallucination of non-existent properties or relationships. This is reflected in the 53\% reduction in syntax errors.
+\paragraph{Schema grounding as implicit constraint satisfaction.} The InterCOL step (step~2 of our reasoning format) forces the model to explicitly identify valid schema elements before constructing the query. This constrains the output space to valid node labels, relationship types, and properties, reducing hallucination. The effect is strongest on simple schemas (1-hop queries with 0-2 relationship types: +0.77 EM) where the schema is small enough to reason about within the token budget. This is reflected in the 53\% reduction in syntax errors.
 
-\paragraph{Scaling with complexity.} The monotonic increase in improvement with query length (Table~\ref{tab:complexity}) mirrors findings from Text-to-SQL research \citep{he2025starsql, tai2023cot}, where CoT primarily helps on hard and extra-hard queries. Direct-answer training provides insufficient signal for complex queries that require multi-step reasoning.
+\paragraph{Two separable mechanisms with different cost profiles.} Latent learning (51\% of GLEU gain, no extra cost) and active reasoning (85\% of EM gain, 6.9x cost) serve different purposes. This has practical implications: approximate queries for search/retrieval can use the faster latent-only configuration, while exact queries for production databases require full active reasoning. This cost-accuracy tradeoff has not been previously characterized for query generation.
 
 \subsection{Cost-Effectiveness}
 

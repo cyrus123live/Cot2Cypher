@@ -361,6 +361,86 @@ The 122 string-match regressions (baseline correct, CoT wrong) show a consistent
 
 Many regressions are cosmetic — the CoT output is semantically correct but differs from the reference in ways that string matching penalizes. This is confirmed by the execution EM analysis where the improvement-to-regression ratio (2.2:1) is lower than for string EM (8.4:1), meaning some "regressions" on string match are actually execution matches.
 
+### 6.7 The 1-Hop Paradox: Schema Grounding as Constraint Satisfaction
+
+A surprising finding in the per-feature analysis is that the baseline performs *worst* on the *simplest* traversals:
+
+| Traversal | Baseline EM | CoT EM | Delta |
+|-----------|:-----------:|:------:|:-----:|
+| 0-hop (node only) | 0.272 | 0.456 | +0.183 |
+| 1-hop | 0.023 | 0.437 | **+0.414** |
+| 2-hop | 0.197 | 0.361 | +0.164 |
+| 3+-hop | 0.075 | 0.212 | +0.137 |
+
+The baseline achieves only 2.3% EM on 1-hop queries, worse than 2-hop (19.7%) or even 3+-hop (7.5%). CoT's largest improvement is correspondingly on 1-hop (+0.414), not the structurally harder categories.
+
+**This paradox holds within the same data source.** Restricting to `neo4jLabs_functional_cypher` (eliminating cross-source confounds):
+
+| Traversal | n | Baseline EM | CoT EM | Delta |
+|-----------|--:|:-----------:|:------:|:-----:|
+| 0-hop | 535 | 0.493 | 0.877 | +0.383 |
+| 1-hop | 186 | 0.038 | 0.887 | **+0.850** |
+| 2-hop | 583 | 0.506 | 0.925 | +0.418 |
+| 3+-hop | 179 | 0.251 | 0.810 | +0.559 |
+
+The baseline gets 49.3% on 0-hop and 50.6% on 2-hop, but only 3.8% on 1-hop. Why?
+
+**Explanation: 1-hop queries combine traversal with aggregation.** Analyzing feature prevalence within `functional_cypher` by hop count reveals that 1-hop queries disproportionately require WITH clauses (34.4% vs 14.4% for 2-hop), DISTINCT (25.8% vs 17.7%), and COUNT (32.8% vs 27.8%). The baseline can handle traversals (2-hop: 50.6%) and node-only aggregation (0-hop: 49.3%) separately, but fails when both are required together. For 1-hop queries with WITH clauses, the baseline achieves 0.0% EM. For those with DISTINCT, also 0.0%.
+
+**CoT resolves this through explicit compositional reasoning.** The 4-step decomposition first identifies the traversal pattern (step 3), then constructs the aggregation logic separately (step 4), composing them in sequence. This mirrors how compositional generalization works in human reasoning: learn primitives, then learn to compose them. The baseline's direct-answer training never provides signal about how to combine these primitives.
+
+**Schema complexity interaction.** The effect is strongest on simple schemas (0-2 relationship types): +0.77 EM improvement on 1-hop. On complex schemas (11-20 relationship types), the improvement drops to +0.03. This suggests that CoT's schema grounding (step 2: InterCOL) is most effective when the schema is small enough to reason about within the token budget.
+
+### 6.8 Latent vs Active Reasoning: Two Mechanisms of CoT Distillation
+
+Our ablation (Section 5.4) reveals that CoT distillation operates through two separable mechanisms with different cost profiles and use cases:
+
+| Configuration | GLEU | String EM | Avg Output Tokens | Relative Cost |
+|---------------|:----:|:---------:|:-----------------:|:-------------:|
+| Baseline | 0.6455 | 0.1924 | ~39 | 1.0x |
+| Latent (CoT training, baseline prompt) | 0.7082 | 0.2197 | ~36 | ~1.0x |
+| Active (CoT training + CoT prompt) | 0.7682 | 0.3799 | ~247 | ~6.9x |
+
+**Latent reasoning** (CoT adapter with baseline prompt, no explicit reasoning at inference) provides 51% of the total GLEU improvement (+0.0627 of +0.1227) at no additional inference cost. The model generates approximately the same number of output tokens as the baseline (~36 vs ~39). Training on reasoning traces teaches better query construction patterns that persist even when the model is not asked to reason.
+
+**Active reasoning** (adding the CoT prompt) provides the remaining 49% of GLEU improvement but accounts for 85% of the exact match improvement (+0.1602 of +0.1875). This comes at ~6.9x inference cost, since the model generates ~247 tokens (reasoning + Cypher) vs ~36 (Cypher only).
+
+**Practical implication:** If approximate queries suffice (e.g., for search or retrieval where partial matches are acceptable), the latent configuration provides substantial improvement at baseline inference speed. If exact queries are required (e.g., for production database access), the full active reasoning is needed, but at higher cost. This cost-accuracy tradeoff has not been previously characterized for query generation.
+
+### 6.9 Graph Reasoning Primitives: A Taxonomy
+
+The per-feature accuracy results (Section 6.4) reveal a principled hierarchy of graph reasoning operations ordered by how much they benefit from explicit chain-of-thought reasoning:
+
+**Tier 1: High CoT benefit (compositional/structural reasoning)**
+| Operation | Delta EM | Graph Theory Concept |
+|-----------|:--------:|---------------------|
+| UNION (query composition) | +0.520 | Disjoint subgraph matching |
+| 1-hop traversal | +0.414 | Schema-constrained edge selection |
+| Variable-length path | +0.321 | Reachability / transitive closure |
+| COLLECT (list aggregation) | +0.218 | Set construction over subgraphs |
+
+**Tier 2: Medium CoT benefit (semantic reasoning)**
+| Operation | Delta EM | Graph Theory Concept |
+|-----------|:--------:|---------------------|
+| EXISTS / NOT EXISTS | +0.208 | Subgraph existence testing |
+| DISTINCT | +0.188 | Duplicate elimination |
+| WITH (intermediate clauses) | +0.181 | Multi-stage subquery chaining |
+| AGGREGATION (AVG/SUM/MIN/MAX) | +0.165 | Graph homomorphism counting |
+
+**Tier 3: Low CoT benefit (syntactic/formatting)**
+| Operation | Delta EM | Graph Theory Concept |
+|-----------|:--------:|---------------------|
+| ORDER BY | +0.088 | Result ordering (post-processing) |
+| LIMIT | +0.078 | Result truncation (post-processing) |
+
+This taxonomy maps onto conceptual difficulty from graph theory. Tier 1 operations involve **graph-structural reasoning**: composing query branches (subgraph isomorphism), selecting traversal paths (edge selection under schema constraints), and reasoning about recursive patterns (transitive closure). These are fundamentally harder problems where explicit decomposition provides direct benefit.
+
+Tier 2 operations involve **semantic reasoning**: testing for the existence of patterns, eliminating duplicates, chaining multi-stage computations. These benefit from reasoning but can sometimes be handled by learned heuristics.
+
+Tier 3 operations are **syntactic formatting**: sorting and limiting results. These require only remembering the correct syntax, no structural reasoning. The model can handle these "on autopilot."
+
+This taxonomy suggests that CoT distillation specifically teaches **graph-structural reasoning**, not general "carefulness." The model learns to decompose complex graph patterns into composable primitives, not just to generate more tokens before answering.
+
 ---
 
 ## 7. Qualitative Examples
