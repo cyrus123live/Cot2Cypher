@@ -26,18 +26,18 @@ EXTRA_ARGS="${@}"
 export PROJECT=~/projects/def-thomo/cyrusp
 export HF_CACHE=~/scratch/hf_cache
 
-# 1. Load modules
+# 1. Load modules (arrow MUST be loaded before virtualenv for pyarrow)
 module load python/3.11
 module load scipy-stack
+module load gcc arrow
 
 # 2. Create virtualenv on fast local SSD
 virtualenv --no-download $SLURM_TMPDIR/env
 source $SLURM_TMPDIR/env/bin/activate
 pip install --no-index --upgrade pip
 
-# Install from DRAC wheels (pyarrow must be installed before datasets)
+# Install from DRAC wheels (pyarrow comes from arrow module loaded above)
 pip install --no-index torch torchvision
-pip install --no-index pyarrow
 pip install --no-index transformers accelerate datasets evaluate safetensors sentencepiece
 pip install --no-index nltk  # needed by evaluate's google_bleu
 
