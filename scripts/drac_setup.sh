@@ -13,6 +13,7 @@ set -e
 
 # PROJECT on DRAC = ~/projects/def-thomo/cyrusp
 export PROJECT=~/projects/def-thomo/cyrusp
+export HF_CACHE=~/scratch/hf_cache
 
 echo "=== DRAC Setup for CoT Text2Cypher ==="
 echo "PROJECT=$PROJECT"
@@ -22,7 +23,7 @@ echo "HOME=$HOME"
 mkdir -p $PROJECT/thesis/data
 mkdir -p $PROJECT/thesis/adapter_weights
 mkdir -p $PROJECT/thesis/results
-mkdir -p $PROJECT/hf_cache
+mkdir -p $HF_CACHE
 mkdir -p $HOME/wheels
 
 # 2. Download pip packages not in DRAC wheelhouse
@@ -60,7 +61,7 @@ python -c "
 from huggingface_hub import snapshot_download
 import os
 
-cache_dir = os.environ.get('PROJECT', '.') + '/hf_cache'
+cache_dir = os.environ.get('HF_CACHE', os.path.expanduser('~/scratch/hf_cache'))
 
 # Download base model
 print('Downloading google/gemma-2-9b-it...')

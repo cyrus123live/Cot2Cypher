@@ -24,6 +24,7 @@ EXTRA_ARGS="${@}"
 
 # PROJECT on DRAC = ~/projects/def-thomo/cyrusp
 export PROJECT=~/projects/def-thomo/cyrusp
+export HF_CACHE=~/scratch/hf_cache
 
 # 1. Load modules
 module load python/3.11
@@ -42,9 +43,9 @@ pip install --no-index transformers accelerate datasets evaluate safetensors sen
 pip install --no-index --find-links $HOME/wheels peft trl bitsandbytes
 
 # 3. Offline mode (Narval/Rorqual have no internet on compute nodes)
-export HF_HOME=$PROJECT/hf_cache
-export TRANSFORMERS_CACHE=$PROJECT/hf_cache
-export HF_DATASETS_CACHE=$PROJECT/hf_cache
+export HF_HOME=$HF_CACHE
+export TRANSFORMERS_CACHE=$HF_CACHE
+export HF_DATASETS_CACHE=$HF_CACHE
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 
