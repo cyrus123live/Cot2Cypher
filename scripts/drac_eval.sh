@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --account=def-thomo
-#SBATCH --gpus-per-node=a100:1       # 1x A100-40GB on Narval (use h100:1 on Fir/Nibi)
+#SBATCH --gpus-per-node=h100:1       # 1x H100-80GB on Fir
 #SBATCH --cpus-per-task=12           # 12 cores per GPU (Narval max)
 #SBATCH --mem=48000M                 # 48 GB system RAM
 #SBATCH --time=24:00:00              # 24 hours
