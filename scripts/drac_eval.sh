@@ -22,6 +22,9 @@
 # Parse arguments passed via sbatch
 EXTRA_ARGS="${@}"
 
+# PROJECT on DRAC = ~/projects/def-thomo/cyrusp
+export PROJECT=~/projects/def-thomo/cyrusp
+
 # 1. Load modules
 module load python/3.11
 module load scipy-stack

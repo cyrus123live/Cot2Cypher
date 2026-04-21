@@ -11,7 +11,12 @@
 
 set -e
 
+# PROJECT on DRAC = ~/projects/def-thomo/cyrusp
+export PROJECT=~/projects/def-thomo/cyrusp
+
 echo "=== DRAC Setup for CoT Text2Cypher ==="
+echo "PROJECT=$PROJECT"
+echo "HOME=$HOME"
 
 # 1. Create directories
 mkdir -p $PROJECT/thesis/data
