@@ -57,7 +57,8 @@ export HF_DATASETS_OFFLINE=1
 # 4. Copy data to fast local storage
 echo "Copying data to local SSD..."
 cp $PROJECT/thesis/data/test_db_mapping.json $SLURM_TMPDIR/ 2>/dev/null || true
-cp -r $PROJECT/thesis/adapter_weights/final/ $SLURM_TMPDIR/adapter/ 2>/dev/null || true
+cp -r ~/scratch/adapter_weights/final/ $SLURM_TMPDIR/adapter/ 2>/dev/null || \
+    cp -r $PROJECT/thesis/adapter_weights/final/ $SLURM_TMPDIR/adapter/ 2>/dev/null || true
 echo "Data copied."
 
 # 5. Run evaluation
