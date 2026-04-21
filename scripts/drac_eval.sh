@@ -32,7 +32,7 @@ module load scipy-stack
 module load gcc arrow
 
 # 2. Create virtualenv on fast local SSD
-virtualenv --no-download $SLURM_TMPDIR/env
+virtualenv --no-download --system-site-packages $SLURM_TMPDIR/env
 source $SLURM_TMPDIR/env/bin/activate
 pip install --no-index --upgrade pip
 
