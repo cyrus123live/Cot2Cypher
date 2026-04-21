@@ -40,9 +40,10 @@ avail_wheels peft 2>/dev/null || echo "peft: not in wheelhouse"
 avail_wheels trl 2>/dev/null || echo "trl: not in wheelhouse"
 avail_wheels bitsandbytes 2>/dev/null || echo "bitsandbytes: not in wheelhouse"
 
-# Download packages not in wheelhouse
-pip download --no-deps -d $HOME/wheels peft trl bitsandbytes 2>/dev/null || \
-    echo "WARNING: Some packages failed to download. Install manually if needed."
+# Download packages not in wheelhouse (or that have build issues)
+pip download --no-deps -d $HOME/wheels peft trl bitsandbytes 2>/dev/null || true
+pip download -d $HOME/wheels datasets evaluate pyarrow nltk 2>/dev/null || true
+echo "Downloaded wheels to $HOME/wheels"
 
 deactivate
 rm -rf $TMPENV

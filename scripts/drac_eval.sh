@@ -35,12 +35,17 @@ virtualenv --no-download $SLURM_TMPDIR/env
 source $SLURM_TMPDIR/env/bin/activate
 pip install --no-index --upgrade pip
 
-# Install from DRAC wheels
+# Install from DRAC wheels (pyarrow must be installed before datasets)
 pip install --no-index torch torchvision
+pip install --no-index pyarrow
 pip install --no-index transformers accelerate datasets evaluate safetensors sentencepiece
+pip install --no-index nltk  # needed by evaluate's google_bleu
 
 # Install pre-downloaded packages (run drac_setup.sh first)
 pip install --no-index --find-links $HOME/wheels peft trl bitsandbytes
+
+# Fallback: if any package failed from wheelhouse, try from pre-downloaded wheels
+pip install --no-index --find-links $HOME/wheels datasets evaluate pyarrow 2>/dev/null || true
 
 # 3. Offline mode (Narval/Rorqual have no internet on compute nodes)
 export HF_HOME=$HF_CACHE
