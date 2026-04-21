@@ -38,7 +38,7 @@ pip install --no-index --upgrade pip
 
 # Install from DRAC wheels (pyarrow comes from arrow module loaded above)
 pip install --no-index torch torchvision
-pip install --no-index transformers accelerate datasets evaluate safetensors sentencepiece
+pip install --no-index transformers accelerate datasets evaluate safetensors sentencepiece protobuf
 pip install --no-index nltk  # needed by evaluate's google_bleu
 
 # Install pre-downloaded packages (run drac_setup.sh first)
