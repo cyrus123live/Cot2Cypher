@@ -42,7 +42,7 @@ avail_wheels bitsandbytes 2>/dev/null || echo "bitsandbytes: not in wheelhouse"
 
 # Download packages not in wheelhouse (or that have build issues)
 pip download --no-deps -d $HOME/wheels peft trl bitsandbytes 2>/dev/null || true
-pip download -d $HOME/wheels datasets evaluate pyarrow nltk 2>/dev/null || true
+pip download -d $HOME/wheels datasets evaluate pyarrow nltk sentencepiece protobuf 2>/dev/null || true
 echo "Downloaded wheels to $HOME/wheels"
 
 deactivate

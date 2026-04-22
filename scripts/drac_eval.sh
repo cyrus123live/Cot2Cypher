@@ -45,7 +45,7 @@ pip install --no-index nltk  # needed by evaluate's google_bleu
 pip install --no-index --find-links $HOME/wheels peft trl bitsandbytes
 
 # Fallback: if any package failed from wheelhouse, try from pre-downloaded wheels
-pip install --no-index --find-links $HOME/wheels datasets evaluate pyarrow 2>/dev/null || true
+pip install --no-index --find-links $HOME/wheels datasets evaluate pyarrow sentencepiece 2>/dev/null || true
 
 # 3. Offline mode (Narval/Rorqual have no internet on compute nodes)
 export HF_HOME=$HF_CACHE
