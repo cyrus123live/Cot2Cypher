@@ -47,12 +47,14 @@ pip install --no-index --find-links $HOME/wheels peft trl bitsandbytes
 # Fallback: if any package failed from wheelhouse, try from pre-downloaded wheels
 pip install --no-index --find-links $HOME/wheels datasets evaluate pyarrow sentencepiece 2>/dev/null || true
 
-# 3. Offline mode (Narval/Rorqual have no internet on compute nodes)
+# 3. HuggingFace cache on scratch (Fir has internet, no need for offline mode)
 export HF_HOME=$HF_CACHE
 export TRANSFORMERS_CACHE=$HF_CACHE
 export HF_DATASETS_CACHE=$HF_CACHE
-export TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_OFFLINE=1
+export HF_TOKEN=$(cat ~/.cache/huggingface/token 2>/dev/null || echo "")
+# Uncomment these for clusters WITHOUT internet (Narval, Rorqual):
+# export TRANSFORMERS_OFFLINE=1
+# export HF_DATASETS_OFFLINE=1
 
 # 4. Copy data to fast local storage
 echo "Copying data to local SSD..."
