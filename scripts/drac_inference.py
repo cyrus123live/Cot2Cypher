@@ -58,8 +58,8 @@ def load_model(adapter_path: str, hf_cache: str = None):
     if hf_cache:
         kwargs["cache_dir"] = hf_cache
 
-    print(f"Loading tokenizer from {adapter_path}...")
-    tokenizer = AutoTokenizer.from_pretrained(adapter_path, **kwargs)
+    print(f"Loading tokenizer from {BASE_MODEL}...")
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, **kwargs)
     tokenizer.padding_side = "left"
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
