@@ -63,16 +63,13 @@ cp -r ~/scratch/adapter_weights/final/ $SLURM_TMPDIR/adapter/ 2>/dev/null || \
     cp -r $PROJECT/thesis/adapter_weights/final/ $SLURM_TMPDIR/adapter/ 2>/dev/null || true
 echo "Data copied."
 
-# 5. Run evaluation
+# 5. Run evaluation (output directly to scratch for crash safety)
 echo "Starting evaluation..."
+mkdir -p ~/scratch/results
 python $PROJECT/thesis/scripts/drac_inference.py \
     --adapter-path $SLURM_TMPDIR/adapter \
-    --output-dir $SLURM_TMPDIR/results \
+    --output-dir ~/scratch/results \
     --hf-cache $HF_CACHE \
     $EXTRA_ARGS
 
-# 6. Copy results back to persistent storage (scratch, project is over quota)
-echo "Copying results to scratch..."
-mkdir -p ~/scratch/results
-cp -r $SLURM_TMPDIR/results/* ~/scratch/results/
 echo "Done. Results in ~/scratch/results/"

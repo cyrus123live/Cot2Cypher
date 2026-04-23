@@ -179,87 +179,133 @@ def main():
     print(f"Test set: {len(examples)} examples.")
 
     # ================================================================
-    # Greedy evaluation (always run)
+    # Greedy evaluation (always run, with checkpointing)
     # ================================================================
     greedy_path = os.path.join(args.output_dir, "predictions_cot_greedy.jsonl")
 
+    # Resume from checkpoint
+    completed_greedy = 0
     if os.path.exists(greedy_path):
-        print(f"Greedy predictions exist at {greedy_path}, skipping.")
+        with open(greedy_path) as f:
+            completed_greedy = sum(1 for _ in f)
+        print(f"Greedy: resuming from {completed_greedy}/{len(examples)}")
+
+    if completed_greedy >= len(examples):
+        print(f"Greedy predictions complete ({completed_greedy}), skipping.")
     else:
-        print("\n=== Greedy Evaluation ===")
+        print(f"\n=== Greedy Evaluation ({len(examples) - completed_greedy} remaining) ===")
         start = time.time()
-        greedy_results = run_inference(
-            model, tokenizer, examples,
-            batch_size=args.batch_size,
-            max_length=args.max_length,
-            do_sample=False,
-        )
+        remaining = examples[completed_greedy:]
+
+        with open(greedy_path, "a") as f:
+            for batch_start in range(0, len(remaining), args.batch_size):
+                batch = remaining[batch_start : batch_start + args.batch_size]
+                results = run_inference(
+                    model, tokenizer, batch,
+                    batch_size=args.batch_size,
+                    max_length=args.max_length,
+                    do_sample=False,
+                )
+                for ex, (raw_output, predicted_cypher) in zip(batch, results):
+                    record = {
+                        "instance_id": ex.get("instance_id", ""),
+                        "question": ex["question"],
+                        "schema": ex["schema"],
+                        "predicted_cypher": predicted_cypher,
+                        "reference_cypher": ex["cypher"],
+                        "raw_output": raw_output,
+                        "data_source": ex.get("data_source", "unknown"),
+                    }
+                    f.write(json.dumps(record) + "\n")
+
+                done = completed_greedy + batch_start + len(batch)
+                if done % 50 < args.batch_size or done >= len(examples):
+                    f.flush()
+                    elapsed = time.time() - start
+                    rate = (batch_start + len(batch)) / elapsed
+                    eta = (len(remaining) - batch_start - len(batch)) / rate / 60 if rate > 0 else 0
+                    print(f"  [{done}/{len(examples)}] {rate:.2f}/sec, ETA: {eta:.1f}m")
+
         elapsed = time.time() - start
         print(f"Greedy done in {elapsed / 60:.1f} min.")
 
-        with open(greedy_path, "w") as f:
-            for ex, (raw_output, predicted_cypher) in zip(examples, greedy_results):
-                record = {
-                    "instance_id": ex.get("instance_id", ""),
-                    "question": ex["question"],
-                    "schema": ex["schema"],
-                    "predicted_cypher": predicted_cypher,
-                    "reference_cypher": ex["cypher"],
-                    "raw_output": raw_output,
-                    "data_source": ex.get("data_source", "unknown"),
-                }
-                f.write(json.dumps(record) + "\n")
-        print(f"Saved to {greedy_path}")
-
     # ================================================================
-    # Self-consistency evaluation (if requested)
+    # Self-consistency evaluation (if requested, with checkpointing)
     # ================================================================
     if args.self_consistency > 0:
         n_samples = args.self_consistency
+        print(f"\n=== Self-Consistency (n={n_samples}, T={args.temperature}) ===")
+        start = time.time()
+
+        # Run each sample as a separate file for resumability
+        sample_files = []
+        for sample_idx in range(n_samples):
+            sample_path = os.path.join(
+                args.output_dir, f"sc_sample_{sample_idx}.jsonl"
+            )
+            sample_files.append(sample_path)
+
+            # Check if this sample is already complete
+            completed = 0
+            if os.path.exists(sample_path):
+                with open(sample_path) as f:
+                    completed = sum(1 for _ in f)
+
+            if completed >= len(examples):
+                print(f"Sample {sample_idx + 1}/{n_samples}: complete ({completed}), skipping.")
+                continue
+
+            print(f"\nSample {sample_idx + 1}/{n_samples}: {len(examples) - completed} remaining")
+            remaining = examples[completed:]
+
+            with open(sample_path, "a") as f:
+                for batch_start in range(0, len(remaining), args.batch_size):
+                    batch = remaining[batch_start : batch_start + args.batch_size]
+                    results = run_inference(
+                        model, tokenizer, batch,
+                        batch_size=args.batch_size,
+                        max_length=args.max_length,
+                        do_sample=True,
+                        temperature=args.temperature,
+                    )
+                    for (raw_output, predicted_cypher) in results:
+                        f.write(json.dumps({"cypher": predicted_cypher}) + "\n")
+
+                    done = completed + batch_start + len(batch)
+                    if done % 50 < args.batch_size or done >= len(examples):
+                        f.flush()
+                        elapsed_sample = time.time() - start
+                        print(f"  [{done}/{len(examples)}]")
+
+        # Majority vote across all samples
         sc_path = os.path.join(
             args.output_dir,
             f"predictions_cot_sc{n_samples}_t{args.temperature}.jsonl",
         )
 
-        if os.path.exists(sc_path):
-            print(f"Self-consistency predictions exist at {sc_path}, skipping.")
-        else:
-            print(f"\n=== Self-Consistency (n={n_samples}, T={args.temperature}) ===")
-            start = time.time()
+        print(f"\nComputing majority vote...")
+        all_samples = []
+        for sf in sample_files:
+            with open(sf) as f:
+                all_samples.append([json.loads(line)["cypher"] for line in f])
 
-            # Collect all samples
-            all_samples = []
-            for sample_idx in range(n_samples):
-                print(f"\n--- Sample {sample_idx + 1}/{n_samples} ---")
-                sample_results = run_inference(
-                    model, tokenizer, examples,
-                    batch_size=args.batch_size,
-                    max_length=args.max_length,
-                    do_sample=True,
-                    temperature=args.temperature,
-                )
-                all_samples.append(sample_results)
+        with open(sc_path, "w") as f:
+            for i, ex in enumerate(examples):
+                candidates = [all_samples[s][i] for s in range(n_samples)]
+                voted_cypher = self_consistency_vote(candidates)
+                record = {
+                    "instance_id": ex.get("instance_id", ""),
+                    "question": ex["question"],
+                    "schema": ex["schema"],
+                    "predicted_cypher": voted_cypher,
+                    "reference_cypher": ex["cypher"],
+                    "candidates": candidates,
+                    "data_source": ex.get("data_source", "unknown"),
+                }
+                f.write(json.dumps(record) + "\n")
 
-            elapsed = time.time() - start
-            print(f"\nAll samples done in {elapsed / 60:.1f} min.")
-
-            # Majority vote
-            with open(sc_path, "w") as f:
-                for i, ex in enumerate(examples):
-                    candidates = [all_samples[s][i][1] for s in range(n_samples)]
-                    voted_cypher = self_consistency_vote(candidates)
-
-                    record = {
-                        "instance_id": ex.get("instance_id", ""),
-                        "question": ex["question"],
-                        "schema": ex["schema"],
-                        "predicted_cypher": voted_cypher,
-                        "reference_cypher": ex["cypher"],
-                        "candidates": candidates,
-                        "data_source": ex.get("data_source", "unknown"),
-                    }
-                    f.write(json.dumps(record) + "\n")
-            print(f"Saved to {sc_path}")
+        elapsed = time.time() - start
+        print(f"Self-consistency done in {elapsed / 60:.1f} min. Saved to {sc_path}")
 
     # ================================================================
     # Compute metrics
