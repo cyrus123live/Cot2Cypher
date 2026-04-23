@@ -3,7 +3,7 @@
 #SBATCH --gpus-per-node=h100:1       # 1x H100-80GB on Fir
 #SBATCH --cpus-per-task=12           # 12 cores per GPU (Narval max)
 #SBATCH --mem=48000M                 # 48 GB system RAM
-#SBATCH --time=24:00:00              # 24 hours
+#SBATCH --time=72:00:00              # 72 hours (3 days)
 #SBATCH --output=%N-%j.out
 #SBATCH --error=%N-%j.err
 #SBATCH --job-name=cot-eval
