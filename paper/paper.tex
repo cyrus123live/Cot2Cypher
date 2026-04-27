@@ -271,6 +271,27 @@ Full CoT & CoT & \textbf{0.7682} & \textbf{0.3799} \\
 
 CoT training data alone yields +0.0627 GLEU even without the reasoning prompt, demonstrating that the model learns generalizable query construction from reasoning traces. Adding the CoT prompt provides an additional +0.0600 GLEU and +0.1602 string EM. The two components are complementary: training teaches better query patterns, while the prompt activates explicit reasoning at inference time.
 
+\subsection{Self-Consistency}
+
+We evaluate self-consistency with 5 samples at temperature 0.7, selecting the majority-voted Cypher query.
+
+\begin{table}[h]
+\centering
+\caption{Self-consistency (SC@5) results.}
+\label{tab:selfconsistency}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Metric} & \textbf{Greedy} & \textbf{SC@5} & \textbf{Delta} \\
+\midrule
+GLEU ($n$=4,833) & 0.7682 & 0.7634 & $-$0.0048 \\
+String EM ($n$=4,833) & 0.3799 & \textbf{0.3886} & +0.0087 \\
+Exec EM ($n$=2,471) & 0.2554 & 0.2509 & $-$0.0045 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Self-consistency provides a modest +0.9\% string EM improvement (+42 net correct predictions) but slightly decreases GLEU and execution EM. Only 25.6\% of examples produce full agreement across all 5 samples, and 49.8\% achieve majority agreement (3+/5). The limited gains suggest that the model's greedy output is already high-confidence: the constrained output space of Cypher (compared to SQL, which has many equivalent formulations) leaves less room for diversity-based voting to improve results. This finding further supports the observation that the Cypher output space is sufficiently constrained for CoT distillation alone to be effective.
+
 %------------------------------------------------------------------
 \section{Error Analysis}
 %------------------------------------------------------------------
@@ -411,7 +432,7 @@ We have demonstrated that chain-of-thought distillation (generating reasoning tr
 
 Our error analysis reveals that CoT particularly benefits complex, multi-step queries, exactly the cases where direct-answer training provides insufficient learning signal. The total cost of approximately \$75 for the complete pipeline demonstrates the practical viability of this approach.
 
-Future work includes applying self-consistency (majority voting over multiple sampled reasoning paths), agentic self-healing loops (iterative correction with execution feedback), and reinforcement learning on top of the CoT-distilled model. The combination of CoT distillation with GRPO, leveraging both rich reasoning traces and execution-based rewards, is a particularly promising direction.
+Self-consistency via majority voting provided only modest gains (+0.9\% string EM), suggesting the Cypher output space is sufficiently constrained that greedy decoding is near-optimal. Future work includes agentic self-healing loops (iterative correction with execution feedback), validation on additional benchmarks (ZOGRASCOPE for compositional generalization), testing across model families, and reinforcement learning on top of the CoT-distilled model. The combination of CoT distillation with GRPO, leveraging both rich reasoning traces and execution-based rewards, is a particularly promising direction.
 
 %------------------------------------------------------------------
 \bibliographystyle{plainnat}
