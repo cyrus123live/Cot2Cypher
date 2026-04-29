@@ -2,7 +2,9 @@ venv/
 __pycache__/
 .DS_Store
 results/
-data/
+data/*
+!data/zograscope/
+data/zograscope/pole-50.dump
 adapter_weights/
 *.aux
 *.bbl

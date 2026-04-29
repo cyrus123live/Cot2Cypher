@@ -163,6 +163,8 @@ def main():
                         help="Number of samples for self-consistency (0 = greedy only)")
     parser.add_argument("--temperature", type=float, default=0.7,
                         help="Temperature for self-consistency sampling")
+    parser.add_argument("--zograscope", type=str, default=None,
+                        help="Path to ZOGRASCOPE formatted JSONL (instead of Neo4j dataset)")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -171,17 +173,28 @@ def main():
     model, tokenizer = load_model(args.adapter_path, args.hf_cache)
 
     # Load test data
-    print("Loading test dataset...")
-    if args.hf_cache:
-        os.environ["HF_DATASETS_CACHE"] = args.hf_cache
-    ds = load_dataset("neo4j/text2cypher-2024v1", split="test")
-    examples = list(ds)
+    if args.zograscope:
+        print(f"Loading ZOGRASCOPE data from {args.zograscope}...")
+        with open(args.zograscope) as f:
+            examples = [json.loads(line) for line in f]
+        # ZOGRASCOPE uses 'reference_cypher' not 'cypher'
+        for ex in examples:
+            ex["cypher"] = ex.get("reference_cypher", "")
+            ex["instance_id"] = ex.get("id", "")
+            ex["data_source"] = f"zograscope_{ex.get('split', 'unknown')}"
+    else:
+        print("Loading test dataset...")
+        if args.hf_cache:
+            os.environ["HF_DATASETS_CACHE"] = args.hf_cache
+        ds = load_dataset("neo4j/text2cypher-2024v1", split="test")
+        examples = list(ds)
     print(f"Test set: {len(examples)} examples.")
 
     # ================================================================
     # Greedy evaluation (always run, with checkpointing)
     # ================================================================
-    greedy_path = os.path.join(args.output_dir, "predictions_cot_greedy.jsonl")
+    prefix = "predictions_zograscope" if args.zograscope else "predictions_cot"
+    greedy_path = os.path.join(args.output_dir, f"{prefix}_greedy.jsonl")
 
     # Resume from checkpoint
     completed_greedy = 0
@@ -241,7 +254,7 @@ def main():
         sample_files = []
         for sample_idx in range(n_samples):
             sample_path = os.path.join(
-                args.output_dir, f"sc_sample_{sample_idx}.jsonl"
+                args.output_dir, f"{prefix}_sc_sample_{sample_idx}.jsonl"
             )
             sample_files.append(sample_path)
 
@@ -280,7 +293,7 @@ def main():
         # Majority vote across all samples
         sc_path = os.path.join(
             args.output_dir,
-            f"predictions_cot_sc{n_samples}_t{args.temperature}.jsonl",
+            f"{prefix}_sc{n_samples}_t{args.temperature}.jsonl",
         )
 
         print(f"\nComputing majority vote...")
