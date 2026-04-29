@@ -23,7 +23,7 @@
 EXTRA_ARGS="${@}"
 
 # PROJECT on DRAC = ~/projects/def-thomo/cyrusp
-export PROJECT=~/projects/def-thomo/cyrusp
+export PROJECT=~/scratch
 export HF_CACHE=~/scratch/hf_cache
 
 # 1. Load modules (arrow MUST be loaded before virtualenv for pyarrow)

@@ -15,7 +15,7 @@
 #   sbatch scripts/drac_zograscope.sh
 # ==========================================================
 
-export PROJECT=~/projects/def-thomo/cyrusp
+export PROJECT=~/scratch
 export HF_CACHE=~/scratch/hf_cache
 
 # 1. Load modules (arrow before virtualenv for pyarrow)
