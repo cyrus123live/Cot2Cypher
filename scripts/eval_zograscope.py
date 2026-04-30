@@ -29,9 +29,13 @@ Usage (run from project root):
 import argparse
 import csv
 import json
+import logging
 import os
 import sys
 from collections import defaultdict
+
+# Suppress verbose Neo4j warnings
+logging.getLogger("neo4j").setLevel(logging.ERROR)
 
 # ---------------------------------------------------------------------------
 # Schema formatting
@@ -178,37 +182,54 @@ def evaluate_execution(predictions_path, neo4j_uri="bolt://localhost:7687",
         print("Make sure Docker is running with the Pole graph loaded.")
         return
 
-    results = []
-    for i, rec in enumerate(records):
-        # Execute reference
-        try:
-            ref_records, _, _ = driver.execute_query(
-                rec["reference_cypher"], database_="neo4j", timeout=30
-            )
-            ref_rows = sorted(
-                json.dumps({k: v for k, v in r.items()}, sort_keys=True, default=str)
-                for r in ref_records
-            )
-            ref_result = "\n".join(ref_rows)
-            ref_error = None
-        except Exception as e:
-            ref_result = None
-            ref_error = str(e)[:100]
+    MAX_ROWS = 10000
+    results_path = predictions_path.replace("predictions_", "zog_exec_").replace(".jsonl", "_exec.jsonl")
 
-        # Execute prediction
+    # Resume from checkpoint
+    completed_ids = set()
+    results = []
+    if os.path.exists(results_path):
+        with open(results_path) as f:
+            for line in f:
+                r = json.loads(line)
+                completed_ids.add(r["id"])
+                results.append(r)
+        print(f"Resuming: {len(completed_ids)} already evaluated")
+
+    def safe_execute(cypher):
+        """Execute a Cypher query. Returns sorted result values (ignores column names)."""
         try:
-            pred_records, _, _ = driver.execute_query(
-                rec["predicted_cypher"], database_="neo4j", timeout=30
-            )
-            pred_rows = sorted(
-                json.dumps({k: v for k, v in r.items()}, sort_keys=True, default=str)
-                for r in pred_records
-            )
-            pred_result = "\n".join(pred_rows)
-            pred_error = None
+            with driver.session(database="neo4j") as session:
+                result = session.run(cypher, timeout=15)
+                rows = []
+                count = 0
+                for r in result:
+                    count += 1
+                    if count > MAX_ROWS:
+                        result.consume()
+                        return None, f"too_many_rows:>{MAX_ROWS}"
+                    # Use values only (not column names) for comparison
+                    # Convert nodes/relationships to their property dicts for comparability
+                    values = []
+                    for k in r.keys():
+                        v = r[k]
+                        if hasattr(v, "_properties"):  # Node or Relationship
+                            values.append(json.dumps(dict(v._properties), sort_keys=True, default=str))
+                        else:
+                            values.append(json.dumps(v, sort_keys=True, default=str))
+                    rows.append("|".join(values))
+                rows.sort()
+                return "\n".join(rows), None
         except Exception as e:
-            pred_result = None
-            pred_error = str(e)[:100]
+            return None, str(e)[:100]
+
+    out_f = open(results_path, "a")
+    for i, rec in enumerate(records):
+        rec_id = rec.get("id", rec.get("instance_id", str(i)))
+        if rec_id in completed_ids:
+            continue
+        ref_result, ref_error = safe_execute(rec["reference_cypher"])
+        pred_result, pred_error = safe_execute(rec["predicted_cypher"])
 
         match = (
             ref_result is not None
@@ -216,18 +237,24 @@ def evaluate_execution(predictions_path, neo4j_uri="bolt://localhost:7687",
             and ref_result == pred_result
         )
 
-        results.append({
-            "id": rec["id"],
-            "split": rec.get("split", "unknown"),
+        result = {
+            "id": rec_id,
+            "split": rec.get("split", rec.get("data_source", "unknown")).replace("zograscope_", ""),
             "num_nodes": rec.get("num_nodes"),
             "exec_match": match,
             "pred_error": pred_error,
             "ref_error": ref_error,
-        })
+        }
+        results.append(result)
+        out_f.write(json.dumps(result) + "\n")
 
         if (i + 1) % 100 == 0:
-            print(f"  [{i+1}/{len(records)}]")
+            out_f.flush()
+            done_count = sum(1 for r in results)
+            correct = sum(1 for r in results if r["exec_match"])
+            print(f"  [{i+1}/{len(records)}] {correct}/{done_count} = {correct/done_count:.4f}")
 
+    out_f.close()
     driver.close()
 
     # Compute metrics by split
@@ -270,12 +297,6 @@ def evaluate_execution(predictions_path, neo4j_uri="bolt://localhost:7687",
         print(f"  {nn}-node: {s['correct']}/{s['total']} = {s['correct']/s['total']:.4f}")
 
     print("=" * 60)
-
-    # Save results
-    results_path = predictions_path.replace("predictions_", "zog_exec_").replace(".jsonl", "_exec.jsonl")
-    with open(results_path, "w") as f:
-        for r in results:
-            f.write(json.dumps(r) + "\n")
     print(f"\nDetailed results saved to {results_path}")
 
 
