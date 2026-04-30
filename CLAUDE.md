@@ -1075,13 +1075,21 @@ CoT improves on every database (except movies, tied). Fewer prediction errors (1
 **Completed:**
 - Prompt vs training data ablation (CoT adapter + baseline prompt)
 - Error analysis by query complexity, Cypher feature, mismatch type, regressions
+- Self-consistency (SC@5, T=0.7) on DRAC Fir H100 — modest +0.9% string EM, slight GLEU/exec EM decrease (supports "constrained output space" claim)
+- Cross-benchmark transfer to ZOGRASCOPE (zero-shot, no Pole training)
+  - IID: 14.45% (best open-weight)
+  - Compositional: 6.23%
+  - Length: 3.35% (4-14× better than other open models <10B)
+  - GPT-4o reference: 41.67% / 32.91% / 16.28%
+  - Demonstrates CoT distillation transfers across schemas + syntactic dialects
 
 **Remaining (pending funding):**
-- Self-consistency (multiple samples, vote on best) -- cf. CSC-SQL, USC — highest expected impact
 - Few-shot prompting (0, 3, 9 examples)
 - Agentic self-healing loop (re-send with error messages) -- cf. MAC-SQL, SQL-of-Thought
+- Fine-tune on ZOGRASCOPE training set (would let us claim SOTA on compositional generalization)
 - Schema filtering (cf. Neo4j's schema filtering paper)
 - RL on fine-tuned model (optional, GRPO following MDPI paper approach)
+- Second model family (Llama-3.1-8B or Qwen2.5-7B with same CoT pipeline)
 - **(Optional) bf16 LoRA vs QLoRA on CoT data** -- if time permits, train a bf16 LoRA variant to quantify precision contribution on top of CoT
 
 ### Step 5: Write Paper

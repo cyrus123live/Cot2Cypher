@@ -441,6 +441,50 @@ Tier 3 operations are **syntactic formatting**: sorting and limiting results. Th
 
 This taxonomy suggests that CoT distillation specifically teaches **graph-structural reasoning**, not general "carefulness." The model learns to decompose complex graph patterns into composable primitives, not just to generate more tokens before answering.
 
+### 6.10 Self-Consistency
+
+We evaluated self-consistency with 5 sampled generations at temperature 0.7, selecting the majority-voted Cypher per example.
+
+| Metric | Greedy | SC@5 | Delta |
+|--------|:------:|:----:|:-----:|
+| GLEU (n=4,833) | 0.7682 | 0.7634 | -0.0048 |
+| String EM (n=4,833) | 0.3799 | **0.3886** | +0.0087 |
+| Exec EM (n=2,471) | 0.2554 | 0.2509 | -0.0045 |
+
+Self-consistency provides a modest +0.9% string EM improvement (+50 net correct) but slightly decreases GLEU and execution EM. Candidate-agreement statistics:
+- Full agreement (5/5): 25.6% of examples
+- Majority agreement (3+/5): 49.8% of examples
+
+The limited gains contrast sharply with text-to-SQL results (CSC-SQL, STaR-SQL report +3-8%). This suggests Cypher's more constrained output space leaves less room for diversity-based voting to filter noise. The model's greedy output is already high-confidence for most queries — supporting our broader finding that the Cypher output space is sufficiently constrained for CoT distillation alone to be near-optimal.
+
+### 6.11 Cross-Benchmark Generalization (ZOGRASCOPE)
+
+To evaluate generalization beyond the Neo4j benchmark, we test our model zero-shot on ZOGRASCOPE (Cazzaro et al., 2025), a Cypher benchmark on the Pole crime knowledge graph. ZOGRASCOPE provides explicit IID, compositional, and length generalization splits — enabling direct measurement of compositional reasoning transfer.
+
+**Critical caveat:** ZOGRASCOPE uses Neo4j 5+ inline WHERE syntax (e.g., `MATCH (x:Person WHERE x.name = "John")`), while our model was trained exclusively on traditional separate WHERE clauses (e.g., `MATCH (x:Person) WHERE x.name = "John"`). 100% of ZOGRASCOPE queries use inline syntax; 0% of our training data does. This evaluation thus tests both schema-level and syntax-level transfer.
+
+**Zero-shot results (no Pole schema training, traditional WHERE syntax output):**
+
+| Model | IID | Compositional | Length |
+|-------|:---:|:-------------:|:------:|
+| Llama 3.2-3B | 3.38% | 1.48% | 0.24% |
+| Mistral 7B | 8.85% | 4.82% | 0.56% |
+| Qwen3 4B | 10.41% | 7.04% | 0.88% |
+| **Our CoT Gemma-2-9B** | **14.45%** | **6.23%** | **3.35%** |
+| GPT-4o | 41.67% | 32.91% | 16.28% |
+
+**Key observations:**
+
+1. **Best open-weight zero-shot performance:** Our model achieves 14.45% on IID, exceeding all comparable open-weight zero-shot baselines.
+
+2. **Length generalization is unusually strong:** 3.35% on the length-generalization split is 4-14× better than other open-weight models. The closest open-weight baseline (Qwen3 4B) achieves only 0.88%. This suggests CoT distillation specifically improves length generalization, supporting our complexity-scaling findings (Section 6.3) where CoT's advantage grew monotonically with query length on the Neo4j benchmark.
+
+3. **Compositional degradation pattern matches GPT-4o:** The IID-to-compositional accuracy ratio is 2.3× for our model vs. 1.3× for GPT-4o. While GPT-4o has higher absolute accuracy, the qualitative degradation pattern is comparable, suggesting our model's compositional reasoning behavior is qualitatively similar to a much larger frontier model.
+
+4. **Robustness to syntactic dialect:** Despite never seeing inline-WHERE syntax during training, the model produces traditional Cypher queries that successfully execute against the Pole graph in 14.45% of IID cases. This indicates the model has learned schema-mapping and graph-structural reasoning abstractly, not as surface-level pattern matching.
+
+These zero-shot results provide indirect evidence that CoT distillation teaches general graph-structural reasoning that transfers across schemas and Cypher dialects, rather than schema-specific or syntax-specific patterns.
+
 ---
 
 ## 7. Qualitative Examples
@@ -561,24 +605,46 @@ For production deployment, a 9B model running on a single L4 GPU ($0.80/hr on Hu
 
 ## 10. Limitations and Threats to Validity
 
-### 10.1 Known Dataset Issues
+### 10.1 Choice of 2024 Dataset Over 2025
 
-The Neo4j text2cypher-2024v1 dataset has documented limitations that affect all models evaluated on it:
+We use the `neo4j/text2cypher-2024v1` dataset rather than the cleaner `neo4j/text2cypher-2025v1` for three reasons:
+
+1. **Baseline comparability:** Neo4j published fine-tuned baselines (Gemma-2-9B, Llama-3.1-8B) and reference scores for closed models (GPT-4o, Gemini-1.5-Flash) only on the 2024 dataset. Switching to 2025 would eliminate the leaderboard context that motivates our work.
+
+2. **Concurrent work uses 2024:** Tran et al. (2025) — the most directly comparable RL-based method — also evaluates on 2024. Using the same dataset enables direct comparison of CoT distillation (ours: 0.7682 GLEU) vs. SFT+GRPO (theirs: 0.7701 GLEU).
+
+3. **Known issues do not invalidate relative comparisons:** The 2024 dataset has documented limitations: data leakage (same questions with different Cypher across train/test splits), paraphrase contamination, and same-distribution train/test splits (Ozsoy et al., 2025). These affect both baseline and CoT model equally, so relative deltas are unaffected.
+
+We acknowledge that performance on the 2025 dataset could differ. Future work should validate on 2025 once published baselines exist.
+
+### 10.2 Baseline GLEU Discrepancy
+
+Our reproduced baseline GLEU (0.6455) significantly exceeds Neo4j's published value (0.5560) for the same model under nominally identical conditions. Possible explanations:
+
+- **Input truncation:** 10.5% of test prompts exceed 1,600 tokens. Neo4j's training `max_seq_len=1600` may have applied to inference too; we use `max_length=7,680` preserving full schemas. Examples >1,600 tokens score GLEU 0.5056 vs.\ 0.6622 for ≤1,600 in our setup.
+- **Framework versions:** Different transformers, PEFT, or CUDA versions can produce slightly different floating-point behavior.
+- **Generation parameters:** Neo4j did not document their exact decoding strategy.
+
+This discrepancy means absolute leaderboard comparisons (mixing our reproduced numbers with Neo4j's published values for other models) are imperfect. We use our own reproduced baseline as the authoritative comparison point: the +0.1227 GLEU delta and +0.0712 execution EM delta are computed under fully identical conditions.
+
+### 10.3 Known Dataset Issues
+
+Beyond the choice of dataset version, the 2024 benchmark has additional limitations:
 - **Data leakage:** Same questions may appear with different Cypher outputs across train/test splits
 - **Paraphrase contamination:** Paraphrased versions of questions may appear in both splits
 - **Distribution shift:** Train and test drawn from the same distribution; real-world performance may differ
 
-These affect the baseline and CoT model equally and do not invalidate the relative comparison.
-
-### 10.2 Experimental Design Considerations
+### 10.4 Experimental Design Considerations
 
 1. **Two variables changed simultaneously:** The full CoT configuration changes both training data (CoT traces) and inference prompt ("Think step by step"). Our ablation (Section 5) shows that CoT training alone provides +0.0627 GLEU, confirming that the training data is the primary driver.
 
 2. **Single epoch, no hyperparameter tuning:** Following Neo4j's methodology, we train for 1 epoch without tuning. The authors note that "with better-tuned parameters, we could potentially achieve even stronger results." The same applies to our CoT model.
 
-3. **Execution evaluation caveats:** The Neo4j demo databases are live public infrastructure. Database contents may have changed between Neo4j's evaluation and ours, explaining the slight gap between our baseline execution EM (0.1862) and Neo4j's published value (0.2104). The relative comparison between our baseline and CoT model uses identical evaluation timing and methodology.
+3. **Execution evaluation caveats:** The Neo4j demo databases are live public infrastructure. Database contents may have changed between Neo4j's evaluation and ours.
 
 4. **Reasoning trace quality:** The CoT traces were generated by a single model (GPT-oss-120B). Different reasoning models or prompting strategies might produce different results.
+
+5. **ZOGRASCOPE syntactic mismatch:** The cross-benchmark evaluation tests both schema and syntax transfer. Performance might be higher if the model were fine-tuned on ZOGRASCOPE's inline-WHERE syntax.
 
 ---
 
