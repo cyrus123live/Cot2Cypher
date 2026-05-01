@@ -8,6 +8,7 @@ MODEL = "gpt-oss-120b"
 # Provider base URLs (all OpenAI-compatible)
 PROVIDERS = {
     "cerebras": "https://api.cerebras.ai/v1",
+    "groq": "https://api.groq.com/openai/v1",
     "galaxy": "https://api.galaxy.ai/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "deepinfra": "https://api.deepinfra.com/v1/openai",
@@ -17,7 +18,8 @@ PROVIDERS = {
 # Model name per provider (may differ)
 # Override with COT_MODEL env var if you want a specific model on a provider
 MODEL_NAMES = {
-    "cerebras": "qwen-3-235b-a22b-instruct-2507",  # gpt-oss-120b is listed but locked behind tier
+    "cerebras": "qwen-3-235b-a22b-instruct-2507",  # gpt-oss-120b listed but locked behind tier
+    "groq": "openai/gpt-oss-120b",
     "galaxy": "gpt-oss-120b",
     "openrouter": "openai/gpt-oss-120b",
     "deepinfra": "openai/gpt-oss-120b",
