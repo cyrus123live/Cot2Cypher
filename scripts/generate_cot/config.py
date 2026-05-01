@@ -15,8 +15,9 @@ PROVIDERS = {
 }
 
 # Model name per provider (may differ)
+# Override with COT_MODEL env var if you want a specific model on a provider
 MODEL_NAMES = {
-    "cerebras": "gpt-oss-120b",
+    "cerebras": "qwen-3-235b-a22b-instruct-2507",  # gpt-oss-120b is listed but locked behind tier
     "galaxy": "gpt-oss-120b",
     "openrouter": "openai/gpt-oss-120b",
     "deepinfra": "openai/gpt-oss-120b",
@@ -34,6 +35,9 @@ def get_base_url() -> str:
 
 
 def get_model() -> str:
+    override = os.environ.get("COT_MODEL")
+    if override:
+        return override
     provider = get_provider()
     return MODEL_NAMES.get(provider, MODEL)
 

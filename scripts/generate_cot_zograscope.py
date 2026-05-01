@@ -81,7 +81,8 @@ async def generate_one(
     async with semaphore:
         last_error = None
         response = None
-        for attempt in range(MAX_RETRIES):
+        max_attempts = 8  # More attempts for rate-limited backend
+        for attempt in range(max_attempts):
             try:
                 response = await client.chat.completions.create(
                     model=model,
@@ -92,12 +93,18 @@ async def generate_one(
                 break
             except Exception as e:
                 last_error = e
-                if attempt < MAX_RETRIES - 1:
-                    delay = RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 1)
+                err_str = str(e).lower()
+                # Aggressive backoff on rate limits
+                is_rate_limit = "429" in err_str or "queue" in err_str or "rate" in err_str
+                if attempt < max_attempts - 1:
+                    if is_rate_limit:
+                        delay = min(60, 5 * (1.5 ** attempt)) + random.uniform(0, 2)
+                    else:
+                        delay = RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 1)
                     await asyncio.sleep(delay)
                 else:
                     return _error_record(
-                        example, f"API error after {MAX_RETRIES} retries: {last_error}"
+                        example, f"API error after {max_attempts} retries: {last_error}"
                     )
 
     choice = response.choices[0]
@@ -227,29 +234,30 @@ async def main():
 
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
 
-    batch_size = 100
+    batch_size = 10  # Smaller batches: more frequent flushes/checkpoints under rate limits
     start_time = time.time()
     processed = 0
     successes = 0
     failures = 0
     total_prompt_tokens = 0
     total_completion_tokens = 0
+    out_f = open(args.output, "a")
 
     for batch_start in range(0, len(pending), batch_size):
         batch = pending[batch_start : batch_start + batch_size]
         tasks = [generate_one(client, model, example, semaphore) for example in batch]
         results = await asyncio.gather(*tasks)
 
-        with open(args.output, "a") as f:
-            for record in results:
-                f.write(json.dumps(record) + "\n")
-                if record.get("reasoning"):
-                    successes += 1
-                else:
-                    failures += 1
-                meta = record.get("generation_metadata", {})
-                total_prompt_tokens += meta.get("prompt_tokens", 0)
-                total_completion_tokens += meta.get("completion_tokens", 0)
+        for record in results:
+            out_f.write(json.dumps(record) + "\n")
+            if record.get("reasoning"):
+                successes += 1
+            else:
+                failures += 1
+            meta = record.get("generation_metadata", {})
+            total_prompt_tokens += meta.get("prompt_tokens", 0)
+            total_completion_tokens += meta.get("completion_tokens", 0)
+        out_f.flush()
 
         processed += len(batch)
         elapsed = time.time() - start_time
@@ -259,10 +267,13 @@ async def main():
 
         print(
             f"[{len(completed_ids) + processed}/{total}] "
-            f"{rate:.1f}/s | ok={successes} fail={failures} | "
+            f"{rate:.2f}/s | ok={successes} fail={failures} | "
             f"tokens={total_prompt_tokens + total_completion_tokens:,} | "
-            f"ETA: {eta_min:.1f}m"
+            f"ETA: {eta_min:.1f}m",
+            flush=True,
         )
+
+    out_f.close()
 
     elapsed_total = time.time() - start_time
     print(f"\nDone. {processed} examples in {elapsed_total / 60:.1f} min.")
