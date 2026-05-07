@@ -382,6 +382,27 @@ This paradox holds within the \texttt{functional\_cypher} data source (eliminati
 
 The baseline can handle traversals (2-hop: 50.6\%) and node-only aggregation (0-hop: 49.3\%) separately, but fails when both are required in a single query. CoT resolves this through explicit compositional reasoning: step~3 identifies the traversal pattern, then step~4 constructs the aggregation logic separately, composing them in sequence. This mirrors how compositional generalization works: learn primitives, then learn to compose them.
 
+\paragraph{Schema ambiguity as a direct mechanism.} To probe schema-grounding behavior directly, we isolated 1{,}119 1-hop queries where both endpoints are explicitly typed and the reference relationship is declared in the schema. For each, we computed \emph{schema ambiguity} -- the number of distinct relationship types declared in the schema between the unordered pair of node labels involved. We then measured ``correct relationship type used'' -- whether the predicted Cypher references the right relationship type, isolated from surface-form variation.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Schema ambiguity} & \textbf{Baseline} & \textbf{CoT} & \textbf{Penalty} \\
+\midrule
+$=1$ (unambiguous, $n=658$) & 0.948 & 0.970 & --- \\
+$\geq 2$ (ambiguous, $n=461$) & 0.902 & 0.970 & --- \\
+\midrule
+Ambiguity penalty & $-4.6$pp & $\mathbf{0.0}$pp & \\
+\bottomrule
+\end{tabular}
+\caption{The baseline incurs a 4.6pp accuracy drop on the ``correct relationship type'' metric when the schema declares multiple relationship types between the same node pair. CoT collapses this penalty to zero.}
+\label{tab:ambiguity}
+\end{table}
+
+The baseline's ability to pick the right relationship drops 4.6 percentage points when the schema is locally ambiguous. CoT eliminates this penalty entirely: its accuracy is identical (96.96\%) on ambiguous and unambiguous schemas. This is a clean mechanistic confirmation of the schema-grounding hypothesis -- CoT's InterCOL step forces the model to consult the schema rather than rely on relationship-type priors learned from the training distribution. The result is invariance to local schema ambiguity, exactly the property a schema-grounded learner should have.
+
 \subsection{Latent vs.\ Active Reasoning}
 
 Our ablation reveals that CoT distillation operates through two separable mechanisms:

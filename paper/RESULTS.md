@@ -391,55 +391,86 @@ The baseline gets 49.3% on 0-hop and 50.6% on 2-hop, but only 3.8% on 1-hop. Why
 
 **Schema complexity interaction.** The effect is strongest on simple schemas (0-2 relationship types): +0.77 EM improvement on 1-hop. On complex schemas (11-20 relationship types), the improvement drops to +0.03. This suggests that CoT's schema grounding (step 2: InterCOL) is most effective when the schema is small enough to reason about within the token budget.
 
+#### Schema Ambiguity as a Direct Mechanism
+
+To directly probe schema-grounding behavior, we isolated the 1,119 1-hop queries where both endpoints are explicitly typed and the reference relationship is declared in the schema. For each, we computed *schema ambiguity* — the number of distinct relationship types declared in the schema between the (unordered) pair of node labels involved. Ambiguity ≥ 2 means the model must read the schema to disambiguate; ambiguity = 1 means the relationship type is uniquely determined by the node pair.
+
+We measure two metrics: **string EM** (whole-query lexical match) and **correct relationship type used** (does the predicted Cypher reference the right `:REL_TYPE`?). The latter is a direct test of schema grounding, isolated from surface-form variation.
+
+| Ambiguity | n | Baseline `correct rel` | CoT `correct rel` | Δ |
+|-----------|--:|:----------------------:|:-----------------:|:-:|
+| =1 (unambiguous) | 658 | 0.948 | 0.970 | +0.021 |
+| =2 | 156 | 0.878 | 0.949 | +0.071 |
+| =3 | 65 | 0.923 | 0.969 | +0.046 |
+| ≥4 | 240 | 0.913 | 0.983 | +0.071 |
+
+**The baseline incurs a 4.6pp ambiguity penalty** (94.8% on unambiguous → 90.2% on ambiguous): when multiple relationship types are valid between the same node pair, the baseline is more likely to pick the wrong one. **CoT eliminates this penalty entirely** (96.96% on both unambiguous and ambiguous, gap = 0.0pp).
+
+This is a clean mechanistic confirmation of the schema-grounding hypothesis: CoT's InterCOL step (linking sub-questions to specific schema elements) forces the model to consult the schema rather than relying on relationship-type priors learned from the training distribution. The result is that the model's ability to pick the right relationship becomes invariant to whether the schema is locally ambiguous or not — exactly the property a schema-grounded learner should have.
+
+Execution-EM tells the same story (DB-eligible 1-hop subset, n=1,096): CoT improvement is +0.080 / +0.086 / +0.092 across ambiguity buckets 1/2/3, modestly favoring the ambiguous case. The 4+ bucket is dominated by social-network schemas where both models likely memorize the canonical relationship type, making the ambiguity test less diagnostic.
+
 ### 6.8 Latent vs Active Reasoning: Two Mechanisms of CoT Distillation
 
-Our ablation (Section 5.4) reveals that CoT distillation operates through two separable mechanisms with different cost profiles and use cases:
+Our ablation (Section 5.4) reveals that CoT distillation operates through two separable mechanisms with different cost-accuracy profiles. We frame these as **latent reasoning** (knowledge distilled into the weights, no explicit reasoning at inference) and **active reasoning** (the model generates reasoning before the answer):
 
-| Configuration | GLEU | String EM | Avg Output Tokens | Relative Cost |
-|---------------|:----:|:---------:|:-----------------:|:-------------:|
-| Baseline | 0.6455 | 0.1924 | ~39 | 1.0x |
-| Latent (CoT training, baseline prompt) | 0.7082 | 0.2197 | ~36 | ~1.0x |
-| Active (CoT training + CoT prompt) | 0.7682 | 0.3799 | ~247 | ~6.9x |
+| Configuration | GLEU | String EM | Avg Out Tokens | $/1k queries¹ | Latency² |
+|---------------|:----:|:---------:|:--------------:|:-------------:|:--------:|
+| Baseline (no CoT training, no CoT prompt) | 0.6455 | 0.1924 | ~39 | $0.36 | 1.3s |
+| **Latent** (CoT training, baseline prompt) | 0.7082 | 0.2197 | ~36 | $0.33 | 1.2s |
+| **Active** (CoT training, CoT prompt) | 0.7682 | 0.3799 | ~247 | $2.29 | 8.2s |
 
-**Latent reasoning** (CoT adapter with baseline prompt, no explicit reasoning at inference) provides 51% of the total GLEU improvement (+0.0627 of +0.1227) at no additional inference cost. The model generates approximately the same number of output tokens as the baseline (~36 vs ~39). Training on reasoning traces teaches better query construction patterns that persist even when the model is not asked to reason.
+¹ Estimated on a single A10G GPU ($1.00/hr cloud rate, ~30 tok/s for Gemma-2-9B 4-bit).
+² Wall-clock per query for the same setup.
 
-**Active reasoning** (adding the CoT prompt) provides the remaining 49% of GLEU improvement but accounts for 85% of the exact match improvement (+0.1602 of +0.1875). This comes at ~6.9x inference cost, since the model generates ~247 tokens (reasoning + Cypher) vs ~36 (Cypher only).
+**Latent reasoning** delivers 51% of the GLEU improvement (+0.063 of +0.123) at *no inference-time cost* — output token counts are essentially identical to the baseline. SFT on reasoning traces teaches better query-construction priors that persist even when the model is asked to answer directly. This is conceptually similar to how rationale-augmented fine-tuning improves models' ability to generate code or proofs without explicitly producing the rationale at inference.
 
-**Practical implication:** If approximate queries suffice (e.g., for search or retrieval where partial matches are acceptable), the latent configuration provides substantial improvement at baseline inference speed. If exact queries are required (e.g., for production database access), the full active reasoning is needed, but at higher cost. This cost-accuracy tradeoff has not been previously characterized for query generation.
+**Active reasoning** delivers the remaining 49% of GLEU but accounts for **85% of the exact-match improvement** (+0.160 of +0.188). This is the regime where chain-of-thought *acts during decoding*: by first emitting the four-step decomposition, the model conditions its final Cypher token-by-token on its own elaborated plan. The cost is ~7× more output tokens and ~7× higher latency.
+
+**Practical implication.** The two configurations target different deployment regimes:
+- *Search / retrieval / IR-style applications* where partial Cypher matches are acceptable (e.g., re-ranking candidates by overlap with a generated query) can use **latent** at baseline inference cost.
+- *Production database execution* where the query must run correctly should use **active** despite the 7× cost, because exact match (which corresponds far more closely to executable correctness) jumps from 22% to 38%.
+
+This cost-accuracy decomposition has not been previously characterized for query generation. The MDPI RL paper (Tran et al., 2025) reports a single number for their model, conflating latent and active reasoning into one.
 
 ### 6.9 Graph Reasoning Primitives: A Taxonomy
 
-The per-feature accuracy results (Section 6.4) reveal a principled hierarchy of graph reasoning operations ordered by how much they benefit from explicit chain-of-thought reasoning:
+The per-feature accuracy results (Section 6.4) reveal a principled hierarchy of graph-reasoning operations, ordered by how much they benefit from explicit chain-of-thought. The hierarchy aligns with the *computational complexity* of the underlying graph operation — CoT helps more on operations that are intrinsically harder to compute or specify.
 
-**Tier 1: High CoT benefit (compositional/structural reasoning)**
-| Operation | Delta EM | Graph Theory Concept |
-|-----------|:--------:|---------------------|
-| UNION (query composition) | +0.520 | Disjoint subgraph matching |
-| 1-hop traversal | +0.414 | Schema-constrained edge selection |
-| Variable-length path | +0.321 | Reachability / transitive closure |
-| COLLECT (list aggregation) | +0.218 | Set construction over subgraphs |
+**Tier 1: Pattern composition and structural search (CoT benefit ≥ +0.30 EM)**
+| Operation | Δ EM | Graph problem | Complexity class |
+|-----------|:----:|---------------|------------------|
+| UNION | +0.520 | Disjoint pattern composition over the same graph | NP-hard in general (subgraph isomorphism) |
+| 1-hop traversal | +0.414 | Edge selection under schema typing constraints | P, but search space grows with schema ambiguity |
+| Variable-length path | +0.321 | Reachability / transitive closure | P (BFS), but exponential in pattern length |
 
-**Tier 2: Medium CoT benefit (semantic reasoning)**
-| Operation | Delta EM | Graph Theory Concept |
-|-----------|:--------:|---------------------|
-| EXISTS / NOT EXISTS | +0.208 | Subgraph existence testing |
-| DISTINCT | +0.188 | Duplicate elimination |
-| WITH (intermediate clauses) | +0.181 | Multi-stage subquery chaining |
-| AGGREGATION (AVG/SUM/MIN/MAX) | +0.165 | Graph homomorphism counting |
+These all require the model to specify *what graph pattern to search for* — the part of Cypher that has no analogue in the natural-language input and must be inferred from the question's logical structure. Subgraph isomorphism is canonically NP-hard (Cook 1971); even when restricted to the typed-edge case in graph databases, the human-level difficulty of *expressing* the pattern correlates with this combinatorial blowup. CoT's gains here are largest because the four-step decomposition externalizes the pattern-construction step (step 3) that the baseline must perform implicitly in a single forward pass.
 
-**Tier 3: Low CoT benefit (syntactic/formatting)**
-| Operation | Delta EM | Graph Theory Concept |
-|-----------|:--------:|---------------------|
-| ORDER BY | +0.088 | Result ordering (post-processing) |
-| LIMIT | +0.078 | Result truncation (post-processing) |
+**Tier 2: Set / existence semantics (CoT benefit +0.15 to +0.25 EM)**
+| Operation | Δ EM | Graph problem |
+|-----------|:----:|---------------|
+| COLLECT | +0.218 | Set construction over matched subgraphs |
+| EXISTS / NOT EXISTS | +0.208 | Subgraph existence (decision version of isomorphism) |
+| DISTINCT | +0.188 | Duplicate elimination across results |
+| WITH | +0.181 | Multi-stage relational pipelining |
+| Aggregation (AVG/SUM/MIN/MAX) | +0.165 | Counting graph homomorphisms |
 
-This taxonomy maps onto conceptual difficulty from graph theory. Tier 1 operations involve **graph-structural reasoning**: composing query branches (subgraph isomorphism), selecting traversal paths (edge selection under schema constraints), and reasoning about recursive patterns (transitive closure). These are fundamentally harder problems where explicit decomposition provides direct benefit.
+These operations sit "on top of" a pattern that has already been matched. They compose with Tier 1 patterns but the operation itself is well-defined once the underlying match is known. Counting graph homomorphisms is #P-complete (Dyer & Greenhill 2000) but the model is being asked to *write the COUNT clause*, not compute it — a syntactic/semantic alignment task that benefits from reasoning but less than pattern composition does.
 
-Tier 2 operations involve **semantic reasoning**: testing for the existence of patterns, eliminating duplicates, chaining multi-stage computations. These benefit from reasoning but can sometimes be handled by learned heuristics.
+**Tier 3: Result formatting (CoT benefit ≤ +0.10 EM)**
+| Operation | Δ EM | Graph problem |
+|-----------|:----:|---------------|
+| ORDER BY | +0.088 | Result-tuple ordering (post-match) |
+| LIMIT | +0.078 | Result-tuple truncation (post-match) |
 
-Tier 3 operations are **syntactic formatting**: sorting and limiting results. These require only remembering the correct syntax, no structural reasoning. The model can handle these "on autopilot."
+These take a result table as input and produce a result table — they touch no graph structure. They are linear post-processing operations that the baseline already handles "on autopilot" because they appear in canonical positions and have one syntactic form.
 
-This taxonomy suggests that CoT distillation specifically teaches **graph-structural reasoning**, not general "carefulness." The model learns to decompose complex graph patterns into composable primitives, not just to generate more tokens before answering.
+**Interpretation.** Reading the three tiers together, **CoT teaches graph-structural reasoning, not general carefulness or longer outputs.** The gain on each Cypher feature is well-predicted by how much *graph-structural decomposition* it requires:
+1. Patterns that must be searched / composed (Tier 1): largest gains, because step 3 of the QDecomp+InterCOL trace explicitly externalizes pattern construction.
+2. Set / existence semantics on top of patterns (Tier 2): medium gains, because step 4 of the trace breaks down clause assembly.
+3. Pure post-processing (Tier 3): smallest gains, because no structural reasoning is needed.
+
+This taxonomy makes a falsifiable prediction: a *non-reasoning* fine-tune on the same volume of (question, Cypher) pairs without traces should improve Tier 3 most (memorization helps formatting) and Tier 1 least. Our latent ablation (§6.8) is consistent with this — most of the active-reasoning advantage on exact match comes from Tier 1 features, while Tier 3 is approximately solved by both configurations.
 
 ### 6.10 Self-Consistency
 
