@@ -23,7 +23,48 @@ import torch
 from datasets import Dataset
 from peft import LoraConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-from trl import DataCollatorForCompletionOnlyLM, SFTConfig, SFTTrainer
+from trl import SFTConfig, SFTTrainer
+
+
+class CompletionOnlyCollator:
+    """Mask loss on everything before the assistant response template.
+
+    Replacement for trl.DataCollatorForCompletionOnlyLM (removed in trl>=0.13).
+    """
+
+    def __init__(self, tokenizer, response_template: str, max_length: int):
+        self.tokenizer = tokenizer
+        self.response_template_ids = tokenizer.encode(
+            response_template, add_special_tokens=False
+        )
+        self.max_length = max_length
+
+    def __call__(self, features):
+        texts = [f["text"] for f in features]
+        batch = self.tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            max_length=self.max_length,
+            return_tensors="pt",
+        )
+        labels = batch["input_ids"].clone()
+        rt = self.response_template_ids
+        rt_len = len(rt)
+        for i, ids in enumerate(batch["input_ids"]):
+            ids_list = ids.tolist()
+            response_start = None
+            for j in range(len(ids_list) - rt_len + 1):
+                if ids_list[j : j + rt_len] == rt:
+                    response_start = j + rt_len
+                    break
+            if response_start is None:
+                labels[i, :] = -100  # no template found → drop example from loss
+            else:
+                labels[i, :response_start] = -100
+        labels[batch["attention_mask"] == 0] = -100
+        batch["labels"] = labels
+        return batch
 
 BASE_MODEL = "google/gemma-2-9b-it"
 
@@ -104,11 +145,12 @@ def main():
         task_type="CAUSAL_LM",
     )
 
-    # Completion-only collator
+    # Completion-only collator (custom — trl>=0.13 removed DataCollatorForCompletionOnlyLM)
     response_template = "<start_of_turn>model\n"
-    collator = DataCollatorForCompletionOnlyLM(
-        response_template=response_template,
+    collator = CompletionOnlyCollator(
         tokenizer=tokenizer,
+        response_template=response_template,
+        max_length=1600,
     )
 
     # Training config
@@ -130,14 +172,18 @@ def main():
         dataset_text_field="text",
     )
 
-    trainer = SFTTrainer(
+    # Newer TRL renamed `tokenizer` -> `processing_class`. Try modern signature first.
+    trainer_kwargs = dict(
         model=model,
         args=training_args,
         train_dataset=dataset,
-        tokenizer=tokenizer,
         peft_config=lora_config,
         data_collator=collator,
     )
+    try:
+        trainer = SFTTrainer(**trainer_kwargs, processing_class=tokenizer)
+    except TypeError:
+        trainer = SFTTrainer(**trainer_kwargs, tokenizer=tokenizer)
 
     # Resume from latest checkpoint if any
     resume_from = None
