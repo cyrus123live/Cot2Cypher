@@ -426,15 +426,15 @@ Active (CoT train + CoT prompt) & \textbf{0.7682} & \textbf{0.3799} & ${\sim}$24
 
 \subsection{Graph Reasoning Primitives Taxonomy}
 
-The per-feature results (Table~\ref{tab:features}) reveal a principled hierarchy of graph reasoning operations:
+The per-feature results (Table~\ref{tab:features}) reveal a principled hierarchy of graph-reasoning operations, ordered by how much they benefit from explicit chain-of-thought. The hierarchy tracks \textbf{specification difficulty} -- how much structural decision-making the writer must perform when composing the Cypher clause. We emphasize that this is \emph{not} about the computational difficulty of the underlying graph problem: the model is asked to write a query that the database engine then executes. What we are characterizing is how hard it is for the model to compose the right syntactic structure for a given semantic intent.
 
 \begin{itemize}[leftmargin=*]
-\item \textbf{Tier 1 -- Graph-structural reasoning (high CoT benefit):} Pattern composition (UNION: +0.52), schema-constrained edge selection (1-hop: +0.41), recursive traversal (variable-length path: +0.32). These involve subgraph isomorphism and reachability, fundamentally hard problems where explicit decomposition is essential.
-\item \textbf{Tier 2 -- Semantic reasoning (medium):} Existence testing (EXISTS: +0.21), duplicate elimination (DISTINCT: +0.19), multi-stage chaining (WITH: +0.18), aggregation (+0.17). These benefit from reasoning but can sometimes be handled by learned heuristics.
-\item \textbf{Tier 3 -- Syntactic formatting (low):} Result ordering (ORDER BY: +0.09), truncation (LIMIT: +0.08). These require only syntax recall, no structural reasoning.
+\item \textbf{Tier 1 -- Pattern composition and structural specification (high CoT benefit):} UNION (+0.52, construct two structurally distinct patterns), 1-hop traversal (+0.41, select among competing relationship types between the same node pair), variable-length paths (+0.32, specify a recursive constraint). These all require the model to decide \emph{what graph pattern to search for} -- a decision with no direct analogue in the natural-language input.
+\item \textbf{Tier 2 -- Operation choice on top of a matched pattern (medium):} EXISTS (+0.21), DISTINCT (+0.19), WITH (+0.18), aggregation (+0.17), COLLECT (+0.22). Once a pattern is fixed, the writer chooses among a small set of clauses for a specific purpose.
+\item \textbf{Tier 3 -- Result formatting (low):} ORDER BY (+0.09), LIMIT (+0.08). These touch no graph structure; the relevant value is usually explicit in the question and the syntactic form is canonical.
 \end{itemize}
 
-This taxonomy suggests that CoT specifically teaches \emph{graph-structural reasoning}, not general carefulness. The model learns to decompose complex graph patterns into composable primitives rather than simply generating more tokens before answering.
+This taxonomy suggests that CoT teaches \emph{graph-structural specification}, not general carefulness. The model learns to decompose complex graph patterns into composable primitives rather than simply generating more tokens before answering. The taxonomy makes a falsifiable prediction: a non-reasoning fine-tune on the same volume of (question, Cypher) pairs without traces should improve Tier 3 most (memorization helps formatting) and Tier 1 least. Our latent ablation (\S5.2) is consistent with this -- most of the active-reasoning advantage on exact match comes from Tier 1 features, while Tier 3 is approximately solved by both configurations.
 
 %------------------------------------------------------------------
 \section{Discussion}

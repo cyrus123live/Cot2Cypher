@@ -435,40 +435,40 @@ This cost-accuracy decomposition has not been previously characterized for query
 
 ### 6.9 Graph Reasoning Primitives: A Taxonomy
 
-The per-feature accuracy results (Section 6.4) reveal a principled hierarchy of graph-reasoning operations, ordered by how much they benefit from explicit chain-of-thought. The hierarchy aligns with the *computational complexity* of the underlying graph operation — CoT helps more on operations that are intrinsically harder to compute or specify.
+The per-feature accuracy results (Section 6.4) reveal a principled hierarchy of graph-reasoning operations, ordered by how much they benefit from explicit chain-of-thought. The hierarchy tracks **specification difficulty** — how much structural decision-making the writer must perform when composing the Cypher clause. We emphasize that this is *not* about the computational difficulty of the underlying graph problem: the model is asked to *write* a query that the database engine then executes. A child can type `RETURN count(*)` without being able to count subgraphs. What we are characterizing is how hard it is for the model to *compose the right syntactic structure* for a given semantic intent.
 
-**Tier 1: Pattern composition and structural search (CoT benefit ≥ +0.30 EM)**
-| Operation | Δ EM | Graph problem | Complexity class |
-|-----------|:----:|---------------|------------------|
-| UNION | +0.520 | Disjoint pattern composition over the same graph | NP-hard in general (subgraph isomorphism) |
-| 1-hop traversal | +0.414 | Edge selection under schema typing constraints | P, but search space grows with schema ambiguity |
-| Variable-length path | +0.321 | Reachability / transitive closure | P (BFS), but exponential in pattern length |
+**Tier 1: Pattern composition and structural specification (CoT benefit ≥ +0.30 EM)**
+| Operation | Δ EM | Specification challenge |
+|-----------|:----:|-------------------------|
+| UNION | +0.520 | Construct two structurally distinct patterns that together cover the question's intent |
+| 1-hop traversal | +0.414 | Select among competing relationship types that connect the same node pair |
+| Variable-length path | +0.321 | Specify a recursive constraint (`*1..k`) and choose its bounds |
 
-These all require the model to specify *what graph pattern to search for* — the part of Cypher that has no analogue in the natural-language input and must be inferred from the question's logical structure. Subgraph isomorphism is canonically NP-hard (Cook 1971); even when restricted to the typed-edge case in graph databases, the human-level difficulty of *expressing* the pattern correlates with this combinatorial blowup. CoT's gains here are largest because the four-step decomposition externalizes the pattern-construction step (step 3) that the baseline must perform implicitly in a single forward pass.
+These all require the model to decide *what graph pattern to search for*. The pattern has no direct analogue in the natural-language input — it must be inferred from the question's logical structure. CoT's gains here are largest because the four-step decomposition externalizes the pattern-construction step (step 3) that the baseline must otherwise perform implicitly in a single forward pass. (As an aside, the underlying graph problems are also computationally hard — subgraph isomorphism is NP-hard, reachability under bounded length is exponential in the bound — but this is suggestive rather than load-bearing for our claim. The relevant difficulty is at the *writing* layer.)
 
-**Tier 2: Set / existence semantics (CoT benefit +0.15 to +0.25 EM)**
-| Operation | Δ EM | Graph problem |
-|-----------|:----:|---------------|
-| COLLECT | +0.218 | Set construction over matched subgraphs |
-| EXISTS / NOT EXISTS | +0.208 | Subgraph existence (decision version of isomorphism) |
-| DISTINCT | +0.188 | Duplicate elimination across results |
-| WITH | +0.181 | Multi-stage relational pipelining |
-| Aggregation (AVG/SUM/MIN/MAX) | +0.165 | Counting graph homomorphisms |
+**Tier 2: Operation choice on top of a matched pattern (CoT benefit +0.15 to +0.25 EM)**
+| Operation | Δ EM | Specification challenge |
+|-----------|:----:|-------------------------|
+| COLLECT | +0.218 | Decide whether results should be aggregated into a list per group |
+| EXISTS / NOT EXISTS | +0.208 | Wrap a subpattern in an existence predicate |
+| DISTINCT | +0.188 | Decide whether duplicates need elimination |
+| WITH | +0.181 | Insert an intermediate stage to bind values for downstream clauses |
+| Aggregation (AVG/SUM/MIN/MAX) | +0.165 | Choose the right aggregator and the right grouping |
 
-These operations sit "on top of" a pattern that has already been matched. They compose with Tier 1 patterns but the operation itself is well-defined once the underlying match is known. Counting graph homomorphisms is #P-complete (Dyer & Greenhill 2000) but the model is being asked to *write the COUNT clause*, not compute it — a syntactic/semantic alignment task that benefits from reasoning but less than pattern composition does.
+These operations sit on top of a pattern that has already been matched. Once the pattern is fixed, the writer is choosing among a small set of clauses for a specific purpose. CoT helps because step 4 of the trace breaks down clause assembly explicitly, but the choice space is smaller than for Tier 1.
 
 **Tier 3: Result formatting (CoT benefit ≤ +0.10 EM)**
-| Operation | Δ EM | Graph problem |
-|-----------|:----:|---------------|
-| ORDER BY | +0.088 | Result-tuple ordering (post-match) |
-| LIMIT | +0.078 | Result-tuple truncation (post-match) |
+| Operation | Δ EM | Specification challenge |
+|-----------|:----:|-------------------------|
+| ORDER BY | +0.088 | Read a sort key off the question (often "top", "highest", "most") |
+| LIMIT | +0.078 | Read a number off the question |
 
-These take a result table as input and produce a result table — they touch no graph structure. They are linear post-processing operations that the baseline already handles "on autopilot" because they appear in canonical positions and have one syntactic form.
+These take a result table as input and produce a result table. They touch no graph structure and have a single canonical syntactic form. The baseline already handles them well because they appear in stereotyped positions and the relevant value is usually explicit in the question.
 
-**Interpretation.** Reading the three tiers together, **CoT teaches graph-structural reasoning, not general carefulness or longer outputs.** The gain on each Cypher feature is well-predicted by how much *graph-structural decomposition* it requires:
-1. Patterns that must be searched / composed (Tier 1): largest gains, because step 3 of the QDecomp+InterCOL trace explicitly externalizes pattern construction.
-2. Set / existence semantics on top of patterns (Tier 2): medium gains, because step 4 of the trace breaks down clause assembly.
-3. Pure post-processing (Tier 3): smallest gains, because no structural reasoning is needed.
+**Interpretation.** Reading the three tiers together, **CoT teaches graph-structural specification, not general carefulness or longer outputs.** The CoT gain on each Cypher feature is well-predicted by how much structural decision-making the writer must perform:
+1. Patterns that must be composed / searched / recursively bounded (Tier 1): largest gains, because step 3 of the trace externalizes pattern construction.
+2. Clause choice on top of a fixed pattern (Tier 2): medium gains, because step 4 of the trace decomposes clause assembly.
+3. Mechanical post-processing read off the question (Tier 3): smallest gains, because no structural reasoning is needed.
 
 This taxonomy makes a falsifiable prediction: a *non-reasoning* fine-tune on the same volume of (question, Cypher) pairs without traces should improve Tier 3 most (memorization helps formatting) and Tier 1 least. Our latent ablation (§6.8) is consistent with this — most of the active-reasoning advantage on exact match comes from Tier 1 features, while Tier 3 is approximately solved by both configurations.
 
