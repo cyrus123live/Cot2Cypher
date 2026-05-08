@@ -60,23 +60,34 @@ stage(2, "API surface (SFTConfig, LoraConfig, collator)")
 from peft import LoraConfig
 from trl import SFTConfig
 
-# 2a. SFTConfig with our exact kwargs (the bit that bit us last time)
+# 2a. SFTConfig with our exact kwargs (the bit that bit us last time).
+# On a login node with no GPU we can't use bf16/gradient_checkpointing/paged_adamw,
+# but we still want to verify the OTHER kwargs (max_length, dataset_text_field, etc.)
+# are accepted by this trl version.
+HAS_GPU = torch.cuda.is_available()
+print(f"  CUDA available: {HAS_GPU}")
 sft_kwargs = dict(
     output_dir="/tmp/smoke_out",
     num_train_epochs=1,
     per_device_train_batch_size=4,
     gradient_accumulation_steps=8,
     learning_rate=2e-5,
-    optim="paged_adamw_8bit",
-    bf16=True,
     logging_steps=10,
     save_steps=200,
     save_total_limit=3,
-    gradient_checkpointing=True,
-    gradient_checkpointing_kwargs={"use_reentrant": False},
     report_to="none",
     dataset_text_field="text",
 )
+if HAS_GPU:
+    sft_kwargs.update(
+        optim="paged_adamw_8bit",
+        bf16=True,
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+    )
+else:
+    print("  (smoke mode: skipping bf16/paged_adamw/grad_checkpointing — GPU-only)")
+    sft_kwargs.update(use_cpu=True)
 try:
     cfg = SFTConfig(**sft_kwargs, max_length=1600)
     ok("SFTConfig accepts max_length=1600 (TRL 1.x)")
