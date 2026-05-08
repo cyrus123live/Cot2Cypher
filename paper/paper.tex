@@ -405,24 +405,27 @@ The baseline's ability to pick the right relationship drops 4.6 percentage point
 
 \subsection{Latent vs.\ Active Reasoning}
 
-Our ablation reveals that CoT distillation operates through two separable mechanisms:
+Our ablation reveals that CoT distillation operates through two separable mechanisms with different cost-accuracy profiles. We frame these as \emph{latent} reasoning (knowledge distilled into the weights, no explicit reasoning at inference) and \emph{active} reasoning (the model generates reasoning before the answer):
 
 \begin{table}[h]
 \centering
-\caption{Cost-accuracy tradeoff of latent vs.\ active reasoning.}
+\small
+\caption{Cost-accuracy tradeoff of latent vs.\ active reasoning. Exec EM measured on the 2{,}471 DB-eligible test instances.}
 \label{tab:latent_active}
-\begin{tabular}{lcccr}
+\begin{tabular}{lcccccc}
 \toprule
-\textbf{Configuration} & \textbf{GLEU} & \textbf{String EM} & \textbf{Output Tokens} & \textbf{Cost} \\
+\textbf{Configuration} & \textbf{GLEU} & \textbf{Str.\ EM} & \textbf{Exec EM} & \textbf{Tokens} & \textbf{Cost} & \textbf{Latency} \\
 \midrule
-Baseline & 0.6455 & 0.1924 & ${\sim}$39 & 1.0x \\
-Latent (CoT train, baseline prompt) & 0.7082 & 0.2197 & ${\sim}$36 & ${\sim}$1.0x \\
-Active (CoT train + CoT prompt) & \textbf{0.7682} & \textbf{0.3799} & ${\sim}$247 & ${\sim}$6.9x \\
+Baseline & 0.6455 & 0.1924 & 0.1862 & ${\sim}$39 & 1.0x & 1.3s \\
+Latent (CoT train, baseline prompt) & 0.7082 & 0.2197 & 0.2153 & ${\sim}$36 & ${\sim}$1.0x & 1.2s \\
+Active (CoT train + CoT prompt) & \textbf{0.7682} & \textbf{0.3799} & \textbf{0.2554} & ${\sim}$247 & ${\sim}$6.9x & 8.2s \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\textbf{Latent learning} (training on reasoning traces without prompting reasoning at inference) provides 51\% of the total GLEU improvement at no additional inference cost. The model internalizes better query construction patterns from the reasoning traces, producing them instinctively. \textbf{Active reasoning} (adding the CoT prompt) provides the remaining 49\% of GLEU improvement but 85\% of the exact match improvement, at ${\sim}$6.9x inference cost. Getting queries \emph{exactly} right requires explicit step-by-step reasoning; getting them \emph{approximately} right can be learned implicitly.
+The three metrics tell different stories about what latent reasoning recovers. As a fraction of the total active-over-baseline gain: \textbf{latent recovers 51\% of GLEU, 42\% of executable correctness, but only 15\% of string exact match}. Latent reasoning produces queries that are syntactically and semantically close enough to run correctly a substantial fraction of the time, but rarely produces the canonical surface form. Active reasoning is required to converge on the lexical form -- and recovers the remaining ${\sim}$58\% of executable correctness on top of latent.
+
+\textbf{Practical implication.} Approximate-Cypher applications (re-ranking, embedding-based retrieval, query candidate scoring) can use the \emph{latent} configuration at baseline inference cost: GLEU climbs from 0.65 to 0.71 for free. Production database execution benefits from \emph{active} despite the 7$\times$ cost: exec EM jumps from 0.215 to 0.255, and the marginal +0.040 captures the half of executable correctness that requires the canonical reasoning trace. This cost-accuracy decomposition has not been previously characterized for query generation.
 
 \subsection{Graph Reasoning Primitives Taxonomy}
 

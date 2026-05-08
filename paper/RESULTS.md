@@ -414,22 +414,31 @@ Execution-EM tells the same story (DB-eligible 1-hop subset, n=1,096): CoT impro
 
 Our ablation (Section 5.4) reveals that CoT distillation operates through two separable mechanisms with different cost-accuracy profiles. We frame these as **latent reasoning** (knowledge distilled into the weights, no explicit reasoning at inference) and **active reasoning** (the model generates reasoning before the answer):
 
-| Configuration | GLEU | String EM | Avg Out Tokens | $/1k queries¹ | Latency² |
-|---------------|:----:|:---------:|:--------------:|:-------------:|:--------:|
-| Baseline (no CoT training, no CoT prompt) | 0.6455 | 0.1924 | ~39 | $0.36 | 1.3s |
-| **Latent** (CoT training, baseline prompt) | 0.7082 | 0.2197 | ~36 | $0.33 | 1.2s |
-| **Active** (CoT training, CoT prompt) | 0.7682 | 0.3799 | ~247 | $2.29 | 8.2s |
+| Configuration | GLEU | String EM | Exec EM³ | Out Tokens | $/1k queries¹ | Latency² |
+|---------------|:----:|:---------:|:--------:|:----------:|:-------------:|:--------:|
+| Baseline (no CoT training, no CoT prompt) | 0.6455 | 0.1924 | 0.1862 | ~39 | $0.36 | 1.3s |
+| **Latent** (CoT training, baseline prompt) | 0.7082 | 0.2197 | 0.2153 | ~36 | $0.33 | 1.2s |
+| **Active** (CoT training, CoT prompt) | 0.7682 | 0.3799 | 0.2554 | ~247 | $2.29 | 8.2s |
 
 ¹ Estimated on a single A10G GPU ($1.00/hr cloud rate, ~30 tok/s for Gemma-2-9B 4-bit).
 ² Wall-clock per query for the same setup.
+³ Execution exact match against `demo.neo4jlabs.com` over the 2,471 DB-eligible test instances.
 
-**Latent reasoning** delivers 51% of the GLEU improvement (+0.063 of +0.123) at *no inference-time cost* — output token counts are essentially identical to the baseline. SFT on reasoning traces teaches better query-construction priors that persist even when the model is asked to answer directly. This is conceptually similar to how rationale-augmented fine-tuning improves models' ability to generate code or proofs without explicitly producing the rationale at inference.
+The three metrics tell different stories about what latent reasoning recovers:
 
-**Active reasoning** delivers the remaining 49% of GLEU but accounts for **85% of the exact-match improvement** (+0.160 of +0.188). This is the regime where chain-of-thought *acts during decoding*: by first emitting the four-step decomposition, the model conditions its final Cypher token-by-token on its own elaborated plan. The cost is ~7× more output tokens and ~7× higher latency.
+| Metric | Δ Active over Baseline | Δ Latent over Baseline | **Latent recovery** |
+|--------|:---------------------:|:----------------------:|:-------------------:|
+| GLEU | +0.123 | +0.063 | **51%** |
+| Exec EM | +0.069 | +0.029 | **42%** |
+| String EM | +0.188 | +0.027 | **15%** |
+
+**Latent reasoning** matches baseline inference cost (~36 output tokens) but recovers about half of the GLEU gain and a substantial 42% of the executable-correctness gain. SFT on reasoning traces teaches better query-construction priors that persist into direct-answer decoding. This is conceptually similar to how rationale-augmented fine-tuning improves models' ability to generate code or proofs without explicitly producing the rationale at inference.
+
+**Active reasoning** is what's required for the canonical surface form: 85% of the exact-match improvement comes from explicit inference-time reasoning. This is also where executable correctness is fully realized — the remaining 58% of the exec-EM gain over baseline. The cost is ~7× more output tokens and ~7× higher latency.
 
 **Practical implication.** The two configurations target different deployment regimes:
-- *Search / retrieval / IR-style applications* where partial Cypher matches are acceptable (e.g., re-ranking candidates by overlap with a generated query) can use **latent** at baseline inference cost.
-- *Production database execution* where the query must run correctly should use **active** despite the 7× cost, because exact match (which corresponds far more closely to executable correctness) jumps from 22% to 38%.
+- *Search / retrieval / IR-style applications* where Cypher only needs to be approximately right (e.g., as a query candidate to re-rank or as a structured anchor for embedding-based retrieval) can use **latent** at baseline inference cost: GLEU climbs from 0.65 to 0.71 for free.
+- *Production database execution* where the query must actually run correctly benefits substantially from **active** despite the 7× cost: exec EM jumps from 0.215 (latent) to 0.255 (active), and string-canonical correctness jumps from 0.22 to 0.38. The marginal active-only gain on exec EM is +0.040, recovering the second half of the executable-correctness improvement.
 
 This cost-accuracy decomposition has not been previously characterized for query generation. The MDPI RL paper (Tran et al., 2025) reports a single number for their model, conflating latent and active reasoning into one.
 
