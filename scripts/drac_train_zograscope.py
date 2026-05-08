@@ -153,15 +153,14 @@ def main():
         max_length=1600,
     )
 
-    # Training config
-    training_args = SFTConfig(
+    # Training config — handle TRL 0.x (max_seq_length) vs 1.x (max_length) rename
+    sft_kwargs = dict(
         output_dir=args.output_dir,
         num_train_epochs=1,
         per_device_train_batch_size=4,
         gradient_accumulation_steps=8,
         learning_rate=2e-5,
         optim="paged_adamw_8bit",
-        max_seq_length=1600,
         bf16=True,
         logging_steps=10,
         save_steps=200,
@@ -171,6 +170,10 @@ def main():
         report_to="none",
         dataset_text_field="text",
     )
+    try:
+        training_args = SFTConfig(**sft_kwargs, max_length=1600)
+    except TypeError:
+        training_args = SFTConfig(**sft_kwargs, max_seq_length=1600)
 
     # Newer TRL renamed `tokenizer` -> `processing_class`. Try modern signature first.
     trainer_kwargs = dict(
