@@ -149,7 +149,7 @@ response_template = "<start_of_turn>model\n"
 collator = CompletionOnlyCollator(tokenizer=tokenizer, response_template=response_template, max_length=1600)
 ok("CompletionOnlyCollator built")
 
-# Build a fake batch of 2 features
+# Build a fake batch of 2 features — TEXT path (older TRL behavior)
 fake_features = [
     {"text": "<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\nHello world<end_of_turn>"},
     {"text": "<start_of_turn>user\nFoo<end_of_turn>\n<start_of_turn>model\nBar baz<end_of_turn>"},
@@ -157,12 +157,26 @@ fake_features = [
 try:
     batch = collator(fake_features)
     assert "input_ids" in batch and "labels" in batch and "attention_mask" in batch
-    # At least some tokens should be unmasked (label != -100)
     unmasked = (batch["labels"] != -100).any().item()
     assert unmasked, "all labels are -100 — collator masked everything"
-    ok(f"collator returns batch with shapes {tuple(batch['input_ids'].shape)} and unmasked labels")
+    ok(f"collator (text path) batch shape {tuple(batch['input_ids'].shape)}, unmasked labels OK")
 except Exception as e:
-    fail(f"collator failed on fake batch: {e}\n{traceback.format_exc()}")
+    fail(f"collator failed on text-path features: {e}\n{traceback.format_exc()}")
+
+# Pre-tokenized path — what newer TRL hands the collator after pre-tokenization
+try:
+    pre_tok = [
+        tokenizer(f["text"], add_special_tokens=False, truncation=True, max_length=128)
+        for f in fake_features
+    ]
+    pre_features = [{"input_ids": x["input_ids"], "attention_mask": x["attention_mask"]} for x in pre_tok]
+    batch = collator(pre_features)
+    assert "input_ids" in batch and "labels" in batch and "attention_mask" in batch
+    unmasked = (batch["labels"] != -100).any().item()
+    assert unmasked, "all labels are -100 on pre-tokenized path"
+    ok(f"collator (pre-tokenized path) batch shape {tuple(batch['input_ids'].shape)}, unmasked labels OK")
+except Exception as e:
+    fail(f"collator failed on pre-tokenized features: {e}\n{traceback.format_exc()}")
 
 
 # Stage 3: real data round-trip

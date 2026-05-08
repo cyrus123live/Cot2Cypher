@@ -30,6 +30,11 @@ class CompletionOnlyCollator:
     """Mask loss on everything before the assistant response template.
 
     Replacement for trl.DataCollatorForCompletionOnlyLM (removed in trl>=0.13).
+
+    Handles both:
+      - text features: {"text": "..."} — tokenize, pad, mask.
+      - pre-tokenized features: {"input_ids": [...], "attention_mask": [...]} —
+        what newer TRL hands us after its own pre-tokenization. Pad, mask.
     """
 
     def __init__(self, tokenizer, response_template: str, max_length: int):
@@ -39,19 +44,11 @@ class CompletionOnlyCollator:
         )
         self.max_length = max_length
 
-    def __call__(self, features):
-        texts = [f["text"] for f in features]
-        batch = self.tokenizer(
-            texts,
-            padding=True,
-            truncation=True,
-            max_length=self.max_length,
-            return_tensors="pt",
-        )
-        labels = batch["input_ids"].clone()
+    def _build_labels(self, input_ids, attention_mask):
+        labels = input_ids.clone()
         rt = self.response_template_ids
         rt_len = len(rt)
-        for i, ids in enumerate(batch["input_ids"]):
+        for i, ids in enumerate(input_ids):
             ids_list = ids.tolist()
             response_start = None
             for j in range(len(ids_list) - rt_len + 1):
@@ -62,8 +59,36 @@ class CompletionOnlyCollator:
                 labels[i, :] = -100  # no template found → drop example from loss
             else:
                 labels[i, :response_start] = -100
-        labels[batch["attention_mask"] == 0] = -100
-        batch["labels"] = labels
+        labels[attention_mask == 0] = -100
+        return labels
+
+    def __call__(self, features):
+        # Newer TRL pre-tokenizes the dataset, so features arrive already as
+        # {"input_ids": [...], "attention_mask": [...]}. Older path: {"text": "..."}.
+        if features and "input_ids" in features[0]:
+            # Pad pre-tokenized features into a batch tensor
+            batch = self.tokenizer.pad(
+                {
+                    "input_ids": [f["input_ids"] for f in features],
+                    "attention_mask": [
+                        f.get("attention_mask", [1] * len(f["input_ids"]))
+                        for f in features
+                    ],
+                },
+                padding=True,
+                max_length=self.max_length,
+                return_tensors="pt",
+            )
+        else:
+            texts = [f["text"] for f in features]
+            batch = self.tokenizer(
+                texts,
+                padding=True,
+                truncation=True,
+                max_length=self.max_length,
+                return_tensors="pt",
+            )
+        batch["labels"] = self._build_labels(batch["input_ids"], batch["attention_mask"])
         return batch
 
 BASE_MODEL = "google/gemma-2-9b-it"
