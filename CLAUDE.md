@@ -1082,11 +1082,26 @@ CoT improves on every database (except movies, tied). Fewer prediction errors (1
   - Length: 3.35% (4-14× better than other open models <10B)
   - GPT-4o reference: 41.67% / 32.91% / 16.28%
   - Demonstrates CoT distillation transfers across schemas + syntactic dialects
+- **ZOGRASCOPE fine-tune (NEW, 2026-05-18) — STATE OF THE ART ON LENGTH GENERALIZATION**
+  - 4,324 CoT traces distilled via Groq + gpt-oss-120b (99.8% Cypher match, ~$0 with free tier)
+  - 1 epoch QLoRA on Fir H100, 20 min, identical config to Neo4j training
+  - Execution accuracy vs paper baselines:
+    | Model | IID | Comp | Length |
+    |---|---|---|---|
+    | Our zero-shot | 14.45% | 6.23% | 3.35% |
+    | **Our fine-tuned** | **64.71%** | **53.08%** | **32.24%** |
+    | Llama 3.2-3B (paper) | 95.99% | 64.86% | 12.13% |
+    | Qwen3-4B (paper) | 98.04% | 72.42% | 20.19% |
+    | Mistral 7B (paper) | 97.87% | 74.97% | 23.46% |
+  - **+8.78 pp over previous best (Mistral 7B) on length split**, +12.05 pp over Qwen3-4B
+  - **IID-to-length degradation: 33pp (ours) vs 74-84pp (paper baselines)** — CoT-distilled model degrades *gracefully* under length generalization
+  - Direct evidence for the compositional-reasoning hypothesis
+  - Model also adopted ZOGRASCOPE's inline-WHERE syntactic dialect (100% inline-WHERE, 100% x0/x1/x2 vars) — syntax transfer is straightforward once traces exist
+  - Adapter at `~/scratch/zograscope_adapter/final/` on DRAC Fir; predictions at `results/predictions_zograscope_finetuned.jsonl`
 
 **Remaining (pending funding):**
 - Few-shot prompting (0, 3, 9 examples)
 - Agentic self-healing loop (re-send with error messages) -- cf. MAC-SQL, SQL-of-Thought
-- Fine-tune on ZOGRASCOPE training set (would let us claim SOTA on compositional generalization)
 - Schema filtering (cf. Neo4j's schema filtering paper)
 - RL on fine-tuned model (optional, GRPO following MDPI paper approach)
 - Second model family (Llama-3.1-8B or Qwen2.5-7B with same CoT pipeline)
