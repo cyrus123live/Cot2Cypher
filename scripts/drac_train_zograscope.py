@@ -108,6 +108,7 @@ def main():
     parser.add_argument("--train-data", required=True, help="Path to ZOGRASCOPE CoT JSONL")
     parser.add_argument("--output-dir", required=True, help="Adapter output directory")
     parser.add_argument("--hf-cache", default=None, help="HuggingFace cache directory")
+    parser.add_argument("--num-epochs", type=int, default=1, help="Training epochs (default 1)")
     args = parser.parse_args()
 
     # Load training data
@@ -181,7 +182,7 @@ def main():
     # Training config — handle TRL 0.x (max_seq_length) vs 1.x (max_length) rename
     sft_kwargs = dict(
         output_dir=args.output_dir,
-        num_train_epochs=1,
+        num_train_epochs=args.num_epochs,
         per_device_train_batch_size=4,
         gradient_accumulation_steps=8,
         learning_rate=2e-5,
