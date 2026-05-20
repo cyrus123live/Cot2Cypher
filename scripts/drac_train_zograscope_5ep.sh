@@ -36,6 +36,7 @@ export HF_HOME=$HF_CACHE
 export TRANSFORMERS_CACHE=$HF_CACHE
 export HF_DATASETS_CACHE=$HF_CACHE
 export HF_TOKEN=$(cat ~/.cache/huggingface/token 2>/dev/null || echo "")
+export BNB_CUDA_VERSION=129  # bnb ships 12.2/12.6/12.9; force 12.9 if torch is on 13.x
 
 echo "Copying training data..."
 cp ~/scratch/zograscope_cot_traces.jsonl $SLURM_TMPDIR/

@@ -39,6 +39,10 @@ export TRANSFORMERS_CACHE=$HF_CACHE
 export HF_DATASETS_CACHE=$HF_CACHE
 export HF_TOKEN=$(cat ~/.cache/huggingface/token 2>/dev/null || echo "")
 
+# bitsandbytes <-> CUDA version pin: torch wheel now uses CUDA 13.2 but bnb
+# only ships 12.2/12.6/12.9 binaries. Force the 12.9 binary (forward-compatible).
+export BNB_CUDA_VERSION=129
+
 echo "Copying 5-epoch adapter..."
 cp -r ~/scratch/zograscope_adapter_5ep/final/ $SLURM_TMPDIR/adapter/
 echo "Adapter copied."

@@ -43,6 +43,10 @@ export TRANSFORMERS_CACHE=$HF_CACHE
 export HF_DATASETS_CACHE=$HF_CACHE
 export HF_TOKEN=$(cat ~/.cache/huggingface/token 2>/dev/null || echo "")
 
+# bitsandbytes <-> CUDA pin: DRAC torch wheel may use CUDA 13.2, but bnb
+# only ships 12.2/12.6/12.9 binaries. Force 12.9 (forward-compatible).
+export BNB_CUDA_VERSION=129
+
 # 4. Copy training data to local SSD
 echo "Copying training data..."
 cp ~/scratch/zograscope_cot_traces.jsonl $SLURM_TMPDIR/

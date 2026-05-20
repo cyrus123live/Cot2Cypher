@@ -52,6 +52,7 @@ export HF_HOME=$HF_CACHE
 export TRANSFORMERS_CACHE=$HF_CACHE
 export HF_DATASETS_CACHE=$HF_CACHE
 export HF_TOKEN=$(cat ~/.cache/huggingface/token 2>/dev/null || echo "")
+export BNB_CUDA_VERSION=129  # bnb ships 12.2/12.6/12.9; force 12.9 if torch is on 13.x
 # Uncomment these for clusters WITHOUT internet (Narval, Rorqual):
 # export TRANSFORMERS_OFFLINE=1
 # export HF_DATASETS_OFFLINE=1
