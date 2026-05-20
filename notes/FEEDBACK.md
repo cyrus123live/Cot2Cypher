@@ -34,7 +34,37 @@ The April review identified five "deeper angles" to lift the paper above pure em
 | 4. When distillation makes RL redundant | **Open** | Framing only; no GRPO experiment run |
 | 5. Graph reasoning primitives taxonomy | **Done** | Reframed from "computational complexity" to "specification difficulty" (commit `7293220`) |
 
-Working title moved toward "Schema Grounding and Pattern Composition: What Chain-of-Thought Actually Teaches for Graph Query Generation" — mechanistic insight rather than technique application.
+Working title moved toward "Schema Grounding and Pattern Composition: What Chain-of-Thought Actually Teaches for Graph Query Generation" (mechanistic insight rather than technique application).
+
+---
+
+## Novelty (what to lead with)
+
+Ordered by how well each survives a top-venue review.
+
+### Strong (load-bearing)
+
+1. **Graceful degradation under length generalization.** The 33pp IID-to-length drop on ZOGRASCOPE vs 74-84pp for paper baselines is the *pattern*, not just the SOTA number. It's a quantitative finding about *how* training affects generalization, not just *whether* it does. Falsifiable, replicable, surprising.
+
+2. **Schema grounding as the mechanism behind CoT's gains on simple queries.** The 1-hop paradox (baseline worst on simplest queries) plus the schema-ambiguity-elimination result (4.6pp penalty drops to 0pp) is a clean mechanistic test. Most CoT papers report deltas; very few isolate the mechanism this cleanly.
+
+### Moderate
+
+3. **Latent vs active reasoning decomposition with a cost-accuracy curve.** Nobody has cleanly separated the two for query generation. The practical implication (skip reasoning at inference for IR; pay 7x cost for production exec) is concrete enough to be useful, not just analytical. The MDPI RL paper conflates them; we don't.
+
+### Weak (don't lead)
+
+4. **CoT distillation for Cypher.** "Applying a known technique to a new domain." Reviewers have seen this for SQL many times.
+5. **SFT matches RL on Cypher.** Single comparison against Tran et al. Dismissible as "their RL was poorly tuned" until we run our own GRPO.
+6. **Graph reasoning primitives taxonomy.** Useful narrative scaffold but reads as post-hoc rationalization of the per-feature table.
+
+### Contribution statement
+
+> *We provide the first mechanistic decomposition of what chain-of-thought distillation teaches for graph query generation, identifying three separable phenomena: (1) compositional generalization, evidenced by graceful degradation under length splits where comparable models collapse; (2) schema grounding, evidenced by complete elimination of the relationship-type ambiguity penalty; and (3) a latent vs active reasoning split with distinct cost-accuracy regimes. Each is supported by a targeted diagnostic experiment.*
+
+This turns "we beat a benchmark" into "we explain a phenomenon and validate it three ways." Mechanistic outranks empirical outranks technical in reviewer-impact terms.
+
+The single biggest threat to the novelty claim is that all three mechanisms are demonstrated only on Gemma-2-9B. If they don't replicate on Llama or Qwen, the contribution shrinks from "what CoT teaches" to "what CoT teaches *this model*." See gap #1 below.
 
 ---
 
