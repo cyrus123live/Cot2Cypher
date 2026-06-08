@@ -52,14 +52,15 @@ def parse_cypher(raw_output: str) -> str:
     return cypher.strip()
 
 
-def load_model(adapter_path: str, hf_cache: str = None):
+def load_model(adapter_path: str, hf_cache: str = None, base_model: str = None):
     """Load base model with QLoRA quantization and CoT adapter."""
     kwargs = {}
     if hf_cache:
         kwargs["cache_dir"] = hf_cache
 
-    print(f"Loading tokenizer from {BASE_MODEL}...")
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, **kwargs)
+    bm = base_model or BASE_MODEL
+    print(f"Loading tokenizer from {bm}...")
+    tokenizer = AutoTokenizer.from_pretrained(bm, **kwargs)
     tokenizer.padding_side = "left"
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -71,17 +72,21 @@ def load_model(adapter_path: str, hf_cache: str = None):
         bnb_4bit_compute_dtype=torch.bfloat16,
     )
 
-    print(f"Loading base model {BASE_MODEL}...")
-    base_model = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL,
+    # Gemma-2 requires eager attention (soft-capping breaks Flash/SDPA).
+    # Llama-3 and most others are fine with SDPA (default).
+    attn_impl = "eager" if "gemma-2" in bm.lower() else "sdpa"
+
+    print(f"Loading base model {bm} (attn={attn_impl})...")
+    base_model_loaded = AutoModelForCausalLM.from_pretrained(
+        bm,
         quantization_config=bnb_config,
-        attn_implementation="eager",
+        attn_implementation=attn_impl,
         device_map="auto",
         **kwargs,
     )
 
     print(f"Loading adapter from {adapter_path}...")
-    model = PeftModel.from_pretrained(base_model, adapter_path)
+    model = PeftModel.from_pretrained(base_model_loaded, adapter_path)
     model.eval()
     print("Model loaded.")
     return model, tokenizer
@@ -157,6 +162,8 @@ def main():
     parser.add_argument("--adapter-path", required=True, help="Path to CoT LoRA adapter")
     parser.add_argument("--output-dir", required=True, help="Directory for output files")
     parser.add_argument("--hf-cache", default=None, help="HuggingFace cache directory")
+    parser.add_argument("--base-model", default=None,
+                        help=f"Override base model (default: {BASE_MODEL})")
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--max-length", type=int, default=7680)
     parser.add_argument("--self-consistency", type=int, default=0,
@@ -170,7 +177,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     # Load model
-    model, tokenizer = load_model(args.adapter_path, args.hf_cache)
+    model, tokenizer = load_model(args.adapter_path, args.hf_cache, args.base_model)
 
     # Load test data
     if args.zograscope:
