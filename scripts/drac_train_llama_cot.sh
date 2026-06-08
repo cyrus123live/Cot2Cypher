@@ -47,8 +47,14 @@ export HF_TOKEN=$(cat ~/.cache/huggingface/token 2>/dev/null || echo "")
 export BNB_CUDA_VERSION=129  # bnb ships 12.2/12.6/12.9; force 12.9 if torch is on 13.x
 
 echo "Copying training data to local SSD..."
+if [ ! -f ~/scratch/cot_training_data.jsonl ]; then
+    echo "FATAL: ~/scratch/cot_training_data.jsonl not found." >&2
+    echo "       Upload it from your Mac with:" >&2
+    echo "       scp data/cot_training_data.jsonl cyrusp@fir.alliancecan.ca:~/scratch/" >&2
+    exit 1
+fi
 cp ~/scratch/cot_training_data.jsonl $SLURM_TMPDIR/
-echo "Data copied."
+echo "Data copied: $(wc -l < $SLURM_TMPDIR/cot_training_data.jsonl) records, $(du -h $SLURM_TMPDIR/cot_training_data.jsonl | cut -f1)"
 
 echo "Starting Llama-3.1-8B CoT fine-tuning..."
 mkdir -p ~/scratch/llama_cot_adapter
