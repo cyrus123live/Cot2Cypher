@@ -17,6 +17,7 @@ import os
 import sys
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 # Suppress verbose Neo4j warnings (property not found, deprecations)
 logging.getLogger("neo4j").setLevel(logging.ERROR)
@@ -51,24 +52,31 @@ ALIAS_TO_DB = {
 }
 
 NEO4J_URI = "neo4j+s://demo.neo4jlabs.com"
-QUERY_TIMEOUT = 30  # seconds
+QUERY_TIMEOUT = 30  # seconds — passed to session.run
+HARD_TIMEOUT = 45   # seconds — wall-clock kill via ThreadPoolExecutor
 
 
 def get_driver(db_name: str) -> GraphDatabase.driver:
-    """Create a Neo4j driver for a demo database."""
-    return GraphDatabase.driver(NEO4J_URI, auth=(db_name, db_name))
+    """Create a Neo4j driver for a demo database.
+
+    Connection timeouts matter because demo.neo4jlabs.com occasionally hangs
+    on certain queries (notably some on the twitter DB). Without these, the
+    eval can stall indefinitely on a single record despite the per-query
+    `timeout` arg.
+    """
+    return GraphDatabase.driver(
+        NEO4J_URI,
+        auth=(db_name, db_name),
+        connection_timeout=15,            # seconds to acquire TCP/TLS connection
+        connection_acquisition_timeout=60,  # seconds to get a connection from the pool
+        max_connection_lifetime=120,      # seconds before recycling
+    )
 
 
 MAX_RESULT_ROWS = 10000  # Cap results to avoid OOM on runaway queries
 
 
-def execute_cypher(driver, db_name: str, cypher: str) -> tuple[str | None, str | None]:
-    """Execute a Cypher query and return (result_string, error).
-
-    Result string is a lexicographically sorted string representation
-    of all records, matching Neo4j's evaluation methodology.
-    Uses a session with explicit transaction timeout for reliability.
-    """
+def _execute_cypher_inner(driver, db_name: str, cypher: str) -> tuple[str | None, str | None]:
     try:
         with driver.session(database=db_name) as session:
             result = session.run(cypher, timeout=QUERY_TIMEOUT)
@@ -77,7 +85,6 @@ def execute_cypher(driver, db_name: str, cypher: str) -> tuple[str | None, str |
             for record in result:
                 count += 1
                 if count > MAX_RESULT_ROWS:
-                    # Consume remaining to avoid connection issues
                     result.consume()
                     return None, f"too_many_rows: >{MAX_RESULT_ROWS}"
                 row = {k: record[k] for k in record.keys()}
@@ -94,6 +101,32 @@ def execute_cypher(driver, db_name: str, cypher: str) -> tuple[str | None, str |
         return None, "memory_error"
     except Exception as e:
         return None, f"other: {type(e).__name__}: {str(e)[:100]}"
+
+
+def execute_cypher(driver, db_name: str, cypher: str) -> tuple[str | None, str | None]:
+    """Execute a Cypher query with a hard wall-clock timeout.
+
+    The Neo4j driver's `timeout` is a transaction timeout — it does not always
+    fire if the server hangs the TCP connection. We wrap the call in a fresh
+    per-query thread pool and force-fail at HARD_TIMEOUT seconds so a single
+    bad query can't stall a 2,400-record evaluation indefinitely.
+
+    Using a fresh executor per call ensures a hung thread can't block subsequent
+    queries from running (the previous module-level single-worker pool defeated
+    the timeout: cancelled-but-still-running threads blocked the next submit).
+    """
+    # Do NOT use `with ThreadPoolExecutor(...)` here — its __exit__ calls
+    # shutdown(wait=True), which would block until a hung worker finishes,
+    # defeating the timeout. Explicit non-blocking shutdown instead.
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(_execute_cypher_inner, driver, db_name, cypher)
+    try:
+        result = future.result(timeout=HARD_TIMEOUT)
+        executor.shutdown(wait=False)
+        return result
+    except FuturesTimeoutError:
+        executor.shutdown(wait=False)
+        return None, f"hard_timeout: >{HARD_TIMEOUT}s"
 
 
 DB_MAPPING_PATH = "data/test_db_mapping.json"
