@@ -85,6 +85,15 @@ def load_model(adapter_path: str, hf_cache: str = None, base_model: str = None):
         **kwargs,
     )
 
+    # Flush fragmented memory before the adapter load. Newer transformers/peft
+    # can OOM here despite ample headroom on an H100 because adapter weights
+    # load into a contiguous chunk and the base-model load leaves the heap
+    # fragmented.
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        free, total = torch.cuda.mem_get_info()
+        print(f"GPU memory: {free / 1e9:.1f} GB free of {total / 1e9:.1f} GB total")
+
     print(f"Loading adapter from {adapter_path}...")
     model = PeftModel.from_pretrained(base_model_loaded, adapter_path)
     model.eval()

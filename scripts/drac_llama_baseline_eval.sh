@@ -40,6 +40,9 @@ export TRANSFORMERS_CACHE=$HF_CACHE
 export HF_DATASETS_CACHE=$HF_CACHE
 export HF_TOKEN=$(cat ~/.cache/huggingface/token 2>/dev/null || echo "")
 export BNB_CUDA_VERSION=129
+# Reduce GPU memory fragmentation; newer transformers/peft can OOM at adapter
+# load time despite plenty of headroom on an H100. Expandable segments help.
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 echo "Copying Llama baseline adapter..."
 cp -r ~/scratch/llama_baseline_adapter/final/ $SLURM_TMPDIR/adapter/
