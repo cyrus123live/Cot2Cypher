@@ -33,6 +33,17 @@ COT_INSTRUCTION = (
     "Think step by step, then provide the Cypher query."
 )
 
+# Matches the training prompt of direct-answer baselines (e.g.,
+# drac_train_llama_baseline.py). Use --no-cot-prompt for fair evaluation
+# of models trained without "think step by step".
+BASELINE_INSTRUCTION = (
+    "Generate Cypher statement to query a graph database.\n"
+    "Use only the provided relationship types and properties in the schema.\n"
+    "Schema: {schema}\n"
+    "Question: {question}\n"
+    "Cypher output:"
+)
+
 
 def parse_cypher(raw_output: str) -> str:
     """Extract Cypher query from model output containing reasoning + Cypher."""
@@ -102,8 +113,13 @@ def load_model(adapter_path: str, hf_cache: str = None, base_model: str = None):
 
 
 def run_inference(model, tokenizer, examples, batch_size=4, max_length=7680,
-                  max_new_tokens=1024, temperature=0.0, do_sample=False):
-    """Run inference on a list of examples. Returns list of (raw_output, predicted_cypher)."""
+                  max_new_tokens=1024, temperature=0.0, do_sample=False,
+                  instruction_template=COT_INSTRUCTION):
+    """Run inference on a list of examples. Returns list of (raw_output, predicted_cypher).
+
+    `instruction_template` is the prompt fed to the model. Pass BASELINE_INSTRUCTION
+    for direct-answer-trained baselines to avoid training/inference prompt mismatch.
+    """
     gen_params = {
         "max_new_tokens": max_new_tokens,
         "pad_token_id": tokenizer.eos_token_id,
@@ -123,7 +139,7 @@ def run_inference(model, tokenizer, examples, batch_size=4, max_length=7680,
 
         prompts = []
         for ex in batch:
-            content = COT_INSTRUCTION.format(
+            content = instruction_template.format(
                 schema=ex["schema"], question=ex["question"]
             )
             chat = [{"role": "user", "content": content}]
@@ -181,7 +197,13 @@ def main():
                         help="Temperature for self-consistency sampling")
     parser.add_argument("--zograscope", type=str, default=None,
                         help="Path to ZOGRASCOPE formatted JSONL (instead of Neo4j dataset)")
+    parser.add_argument("--no-cot-prompt", action="store_true",
+                        help="Use the direct-answer baseline prompt instead of the "
+                             "'think step by step' CoT prompt. Required to fairly "
+                             "evaluate adapters trained on direct-answer SFT.")
     args = parser.parse_args()
+    instruction_template = BASELINE_INSTRUCTION if args.no_cot_prompt else COT_INSTRUCTION
+    print(f"Inference prompt: {'BASELINE (direct-answer)' if args.no_cot_prompt else 'COT (think step by step)'}")
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -234,6 +256,7 @@ def main():
                     batch_size=args.batch_size,
                     max_length=args.max_length,
                     do_sample=False,
+                    instruction_template=instruction_template,
                 )
                 for ex, (raw_output, predicted_cypher) in zip(batch, results):
                     record = {
@@ -296,6 +319,7 @@ def main():
                         max_length=args.max_length,
                         do_sample=True,
                         temperature=args.temperature,
+                        instruction_template=instruction_template,
                     )
                     for (raw_output, predicted_cypher) in results:
                         f.write(json.dumps({"cypher": predicted_cypher}) + "\n")
