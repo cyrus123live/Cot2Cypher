@@ -1398,3 +1398,103 @@ The professor identified that "we applied CoT to Cypher and it worked" is the we
 ### Strongest Narrative (from advisor)
 
 > "We show that teaching a model HOW to think (CoT distillation, $75 SFT) is as effective as teaching it WHAT to extract (RL with proprietary data), and that the two approaches are complementary."
+---
+
+# ⚠️ CRITICAL ADDENDUM — Controlled Baselines Falsify the Central Claim (2026-06-17)
+
+**Status: The paper's headline result does not survive a controlled experiment. Do not submit. This section supersedes the optimistic framing above until the paper is rebuilt.**
+
+## What happened
+
+For the entire project, the "baseline" we compared our CoT model against was **Neo4j's published fine-tuned adapter** (`neo4j/text2cypher-gemma-2-9b-it-finetuned-2024v1`), run through *our* inference harness. We never trained our own direct-answer (no-CoT) baseline with our own pipeline. So the reported "+0.1227 GLEU from CoT" actually bundled **three** changes at once:
+
+1. Chain-of-thought reasoning (the variable we *thought* we were measuring)
+2. Our training pipeline vs. Neo4j's training pipeline
+3. Our inference context length (`max_length=7680`, full schema) vs. Neo4j's truncation at 1600
+
+The Llama second-model-family experiment is what exposed it. When we trained our **own** Llama-3.1-8B direct-answer baseline (matched pipeline, only training target differs from the CoT arm), it *beat* our Llama+CoT model. That prompted training the missing Gemma direct-answer control. Same result.
+
+## The corrected, matched-pipeline numbers
+
+All rows below are **our pipeline, our inference** unless noted. The only variable between a "baseline" and its "CoT" counterpart is the training target (direct Cypher vs. reasoning+Cypher) and the matching inference prompt.
+
+| Model | Training target | GLEU | String EM |
+|-------|-----------------|:----:|:---------:|
+| Gemma-2-9B — Neo4j *published* adapter | direct (Neo4j's pipeline) | 0.6455 | 0.1924 |
+| **Gemma-2-9B — our direct-answer baseline** | direct (our pipeline) | **0.7854** | **0.4331** |
+| Gemma-2-9B + CoT | reasoning+Cypher | 0.7682 | 0.3799 |
+| **Llama-3.1-8B — our direct-answer baseline** | direct (our pipeline) | **0.7680** | **0.4223** |
+| Llama-3.1-8B + CoT | reasoning+Cypher | 0.7416 | 0.3000 |
+
+**Matched-pipeline CoT effect:**
+- Gemma: **−0.0172 GLEU, −0.0532 String EM** (CoT hurts)
+- Llama: **−0.0264 GLEU, −0.1223 String EM** (CoT hurts)
+
+**Decomposition of the original "+0.1227 GLEU":**
+- Pipeline effect (Neo4j adapter → our direct-answer adapter, identical inference): **+0.1399**
+- CoT effect (our direct-answer → our CoT): **−0.0172**
+- Net reported as "CoT": +0.1227
+
+The entire headline — and more — was the pipeline. CoT subtracted from it.
+
+## We ruled out the obvious escape hatches
+
+**Data leakage (checked locally):**
+- instance_id overlap train vs test: **0** (clean)
+- Test questions appearing *verbatim* in training: **1530/4833 = 31.7%** (the documented 2024-dataset leakage)
+- Full (question, cypher) pair duplicates: 27/4833 = 0.6%
+
+The leakage is "adversarial," not helpful: the same question often appears in train with a *different* gold Cypher, so memorizing the training answer *lowers* test EM on seen items. Confirmed empirically — **seen** questions score worse than **unseen** for every model. So the high baseline is **not** a leakage artifact.
+
+**The decisive split — clean comparison on UNSEEN questions only (our direct-answer Gemma vs our CoT Gemma):**
+
+| | SEEN (leaked, 31.7%) | UNSEEN (genuine, 68.3%) | Overall |
+|---|:---:|:---:|:---:|
+| Direct-answer baseline | 0.1667 | **0.5861** | 0.4533 |
+| CoT model | 0.1242 | 0.5180 | 0.3933 |
+
+On genuinely held-out questions, **direct-answer beats CoT by +0.068 EM**. Per-instance: direct-answer uniquely solves 307 unseen questions CoT misses; CoT uniquely solves only 82 (3.7:1 against CoT). CoT loses *most* exactly where leakage is absent — the opposite of what a leakage-rescue would predict.
+
+This falsifies, in order: the leakage-rescue hypothesis, the model-specific hypothesis (Gemma + Llama agree), and the metric-specific hypothesis (loses on GLEU and EM).
+
+## The unexplained residual we still owe an answer to
+
+Our direct-answer Gemma (0.7854 GLEU) exceeds Neo4j's published Gemma (0.5560) by **+0.23**, and our direct-answer adapter beats Neo4j's adapter by **+0.14 under identical inference**. "Same QLoRA config" should not produce a +0.14 swing. Leading suspect: **completion-only loss masking** (we mask the prompt, compute loss only on the answer; Neo4j may have trained on the full sequence). Until we either reproduce Neo4j's 0.5560 or explain the +0.14, the harness is *uncalibrated* and no absolute number is trustworthy against the published leaderboard. **This must be resolved before any rewrite.**
+
+## What survives, what dies
+
+**Dies (built on the confounded baseline):**
+- "CoT distillation improves Text2Cypher" — the central thesis claim
+- Leaderboard positioning (#4 GLEU) — mixes our numbers with published numbers on a possibly-different harness scale
+- The mechanistic analyses *as causal claims about CoT*: schema-grounding ambiguity penalty (4.6pp→0pp), 1-hop paradox, latent-vs-active decomposition, graph-reasoning taxonomy. All compared CoT against Neo4j's adapter, not a matched baseline. They may describe real differences between *those two models*, but they cannot be attributed to CoT.
+- "SFT matches RL (Tran et al.)" — our SFT number was inflated by the pipeline; the comparison is no longer apples-to-apples.
+
+**Still open (not yet falsified, but not yet established either):**
+- **ZOGRASCOPE length-generalization.** The "SOTA 32.24% on length, graceful 33pp degradation" result compared our CoT fine-tune against the *paper's* published baselines — same confound, no matched direct-answer Gemma-on-Pole control. This is the single place CoT might still earn its keep, because every result above is *in-distribution* and CoT's theorized value is *under distribution shift*. Needs a direct-answer Gemma-on-ZOGRASCOPE control before any claim.
+
+## Required experiments before the paper can be rebuilt
+
+1. **Calibrate the harness.** Reproduce Neo4j's published 0.5560 (their adapter, truncate inference at 1600, exact model-card prompt). Confirms our eval is on the same scale as the leaderboard.
+2. **Explain the +0.14 training gap.** Check Neo4j's training code for completion-only masking; ablate it in our pipeline. This likely *is* a real (if mundane) contribution: a stronger SFT recipe.
+3. **Gemma direct-answer baseline exec EM.** Complete the execution-based row (predictions at `results/predictions_gemma_baseline_greedy.jsonl`; run `eval_execution.py`).
+4. **ZOGRASCOPE matched control.** Train a direct-answer Gemma on the ZOGRASCOPE training set; evaluate on IID/compositional/length. Decides whether CoT's only value is under distribution shift.
+
+## The honest paper(s) this could become
+
+- **Negative result + recipe:** "Chain-of-thought distillation does not improve in-distribution Text2Cypher and modestly degrades it across two model families; a stronger direct-answer SFT recipe accounts for gains previously attributed to CoT." Legitimate, defensible, harder to place but honest.
+- **Distribution-shift framing (if experiment #4 supports it):** "CoT distillation trades in-distribution accuracy for compositional/length generalization." Genuinely interesting *if* the ZOGRASCOPE control holds — but it must be earned with the matched control, not assumed.
+
+## Process lesson (for the methodology section and for next time)
+
+The error was structural: we adopted a published artifact as the control instead of training our own matched baseline, and ran ~8 months of analysis on top of it. The "same QLoRA config, only training data differs" claim in this very document was *aspirational* — it described our intent, but we never instantiated the matched direct-answer arm until the Llama experiment forced it. **Always train your own baseline through your own pipeline before attributing any delta to your intervention.** A published number is not a control.
+
+## Files / artifacts from this investigation
+
+- `scripts/drac_train_llama_baseline.py` / `.sh` — Llama direct-answer baseline (the experiment that exposed it)
+- `scripts/drac_train_gemma_baseline.py` / `.sh` — Gemma direct-answer baseline (the missing control)
+- `scripts/drac_gemma_baseline_eval.sh`, `scripts/drac_llama_baseline_eval.sh`, `scripts/drac_llama_baseline_matched_eval.sh` — matched-prompt (`--no-cot-prompt`) evals
+- `results/predictions_gemma_baseline_greedy.jsonl` — Gemma direct-answer predictions (GLEU 0.7854 / EM 0.4331)
+- `results/predictions_llama_baseline_greedy.jsonl`, `results/predictions_cot_llama_greedy.jsonl` — Llama arms
+- Adapters on DRAC: `~/scratch/gemma_baseline_adapter/final/`, `~/scratch/llama_baseline_adapter/final/`, `~/scratch/llama_cot_adapter/final/`
+
+**Bottom line: the technique we set out to validate does not, on the evidence we now have, do what the paper claims. The next move is the conversation with Alex, not more writing.**
