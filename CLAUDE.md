@@ -1498,3 +1498,30 @@ The error was structural: we adopted a published artifact as the control instead
 - Adapters on DRAC: `~/scratch/gemma_baseline_adapter/final/`, `~/scratch/llama_baseline_adapter/final/`, `~/scratch/llama_cot_adapter/final/`
 
 **Bottom line: the technique we set out to validate does not, on the evidence we now have, do what the paper claims. The next move is the conversation with Alex, not more writing.**
+
+---
+
+# Transfer-Study Findings Log (started 2026-06-17)
+
+After the controlled baselines falsified the CoT headline (see addendum above), the project pivoted to a **"which Text-to-SQL techniques transfer to Text2Cypher?"** study, unified by the **constrained-output-space hypothesis**: Cypher has fewer semantically-equivalent surface forms than SQL, which predicts (a) string-based diversity methods fail, (b) execution-based methods that fix/select on results still help, (c) CoT distillation helps less than in SQL.
+
+## Finding 1: Execution-based selection beats string voting (2026-06-17)
+
+Reusing the saved SC@5 candidates (5 samples/example, T=0.7) — **no new model inference**, only DB execution — we compared selection methods on the 2,420 DB-eligible test instances with a valid reference result:
+
+| Method | Exec EM |
+|--------|:------:|
+| String-voted SC@5 (majority vote on query strings) | 0.2509 |
+| Greedy CoT (single sample) | 0.2554 |
+| **Execution-voted SC@5 (MBR: cluster by result, vote)** | **0.2665** |
+| Oracle (any of 5 candidates matches reference result) | 0.4302 |
+
+**Interpretation:** String voting falls *below* greedy (−0.45pp) — nothing to vote across, since Cypher has ~one canonical surface form. Execution-result voting rises *above* greedy (+1.1pp) and above string voting (+1.6pp), because semantically-equivalent-but-syntactically-different queries collapse into one result cluster and reinforce each other. This is a clean, mechanistic confirmation of the constrained-output-space hypothesis and the CSC-SQL insight (select by execution result, not string).
+
+The oracle ceiling (0.4302) is the key future-work signal: a perfect selector would nearly double exec EM. MBR selection captures 62% of that gap; the rest motivates a trained verifier / best-of-N (the CSC-SQL / RL direction).
+
+Script: `scripts/eval_execution_selection.py`. Result: `results/exec_select_cot_sc5_t0.7_select_metrics.json`.
+
+## Status of the STaR-style execution-filtered CoT experiment
+
+Forward-generation pipeline (teacher derives Cypher without seeing the answer, then execution-filter) built: `generate_cot/prompts_forward.py`, `generate_forward_traces.py`. vLLM-on-DRAC failed to install (opencv-noinstall); pivoted to API generation. Cerebras pilot proved trace quality is good but hit hard rate limits (~250hr extrapolated for the full 22k×4). Pending: switch to Groq + rate-limit backoff, then full forward run → execution-filter → retrain.

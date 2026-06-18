@@ -1,0 +1,7 @@
+{
+  "valid_instances": 2420,
+  "exec_select_em": 0.2665289256198347,
+  "exec_select_match_count": 645,
+  "oracle_any_candidate": 0.43016528925619835,
+  "oracle_count": 1041
+}
