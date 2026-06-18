@@ -27,32 +27,33 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from openai import AsyncOpenAI
-from datasets import load_dataset
 
 from generate_cot.parse import parse_response, validate_result
 from generate_cot.prompts_forward import build_messages_forward
 
 
-def load_db_accessible_training(db_mapping_path: str, limit: int = 0) -> list[dict]:
-    """Load training-split examples that have database access (for exec filtering)."""
-    with open(db_mapping_path) as f:
-        db_map = json.load(f)  # instance_id -> alias (built from test set; see note)
+def load_db_accessible_training(source: str, limit: int = 0) -> list[dict]:
+    """Load training examples that have database access (for execution filtering).
 
-    ds = load_dataset("neo4j/text2cypher-2024v1", split="train")
+    Reads from the local cot_training_data.jsonl (which carries
+    database_reference_alias) so this runs anywhere with no HF download and no
+    dataset-field-name guessing.
+    """
     examples = []
-    for row in ds:
-        # We only keep examples whose database_reference_alias indicates DB access.
-        alias = row.get("database_reference_alias") or ""
-        if not alias:
-            continue
-        examples.append({
-            "instance_id": row["instance_id"],
-            "question": row["question"],
-            "schema": row["schema"],
-            "cypher": row["cypher"],
-            "data_source": row.get("data_source", ""),
-            "database_reference_alias": alias,
-        })
+    with open(source) as f:
+        for line in f:
+            row = json.loads(line)
+            alias = row.get("database_reference_alias") or ""
+            if not alias:
+                continue
+            examples.append({
+                "instance_id": row["instance_id"],
+                "question": row["question"],
+                "schema": row["schema"],
+                "cypher": row["cypher"],
+                "data_source": row.get("data_source", ""),
+                "database_reference_alias": alias,
+            })
     if limit:
         examples = examples[:limit]
     return examples
@@ -108,14 +109,18 @@ async def main():
     ap.add_argument("--max-tokens", type=int, default=1024)
     ap.add_argument("--concurrency", type=int, default=32)
     ap.add_argument("--limit", type=int, default=0)
-    ap.add_argument("--db-mapping", default="data/test_db_mapping.json")
+    ap.add_argument("--source", default="data/cot_training_data.jsonl",
+                    help="JSONL with question/schema/cypher/database_reference_alias")
     ap.add_argument("--output", default="data/forward_traces.jsonl")
     args = ap.parse_args()
 
-    base_url = os.environ.get("COT_API_BASE", "http://localhost:8000/v1")
-    api_key = os.environ.get("COT_API_KEY", "dummy")
+    base_url = os.environ.get("COT_API_BASE", "https://api.cerebras.ai/v1")
+    api_key = os.environ.get("COT_API_KEY", "")
+    if not api_key:
+        raise SystemExit("Set COT_API_KEY (Cerebras key). "
+                         "Set COT_API_BASE to override the endpoint.")
 
-    examples = load_db_accessible_training(args.db_mapping, args.limit)
+    examples = load_db_accessible_training(args.source, args.limit)
     done = load_done(args.output)
     pending = [e for e in examples if e["instance_id"] not in done]
     print(f"Teacher: {args.model} @ {base_url}")
