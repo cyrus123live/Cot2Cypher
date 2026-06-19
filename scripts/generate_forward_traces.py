@@ -59,25 +59,41 @@ def load_db_accessible_training(source: str, limit: int = 0) -> list[dict]:
     return examples
 
 
+async def _one_completion(client, model, messages, temperature, max_tokens, max_attempts=8):
+    """One chat completion with rate-limit-aware backoff."""
+    last_error = None
+    for attempt in range(max_attempts):
+        try:
+            resp = await client.chat.completions.create(
+                model=model, messages=messages,
+                temperature=temperature, max_tokens=max_tokens,
+            )
+            raw = resp.choices[0].message.content or ""
+            result = validate_result(parse_response(raw))
+            if result.success:
+                return {"reasoning": result.reasoning, "cypher": result.cypher}
+            return {"reasoning": "", "cypher": "", "parse_error": result.error}
+        except Exception as e:
+            last_error = e
+            err = str(e).lower()
+            is_rl = "429" in err or "rate" in err or "quota" in err or "too many" in err
+            if attempt < max_attempts - 1:
+                # Aggressive backoff on rate limits, gentler on transient errors
+                delay = (min(60, 5 * (1.5 ** attempt)) if is_rl
+                         else 2.0 * (2 ** attempt)) + random.uniform(0, 2)
+                await asyncio.sleep(delay)
+    return {"reasoning": "", "cypher": "", "error": str(last_error)[:200]}
+
+
 async def generate_candidates(client, model, example, k, temperature, max_tokens, sem):
     """Generate k forward candidates for one example."""
     messages = build_messages_forward(example["schema"], example["question"])
     candidates = []
     async with sem:
         for _ in range(k):
-            try:
-                resp = await client.chat.completions.create(
-                    model=model, messages=messages,
-                    temperature=temperature, max_tokens=max_tokens,
-                )
-                raw = resp.choices[0].message.content or ""
-                result = validate_result(parse_response(raw))
-                if result.success:
-                    candidates.append({"reasoning": result.reasoning, "cypher": result.cypher})
-                else:
-                    candidates.append({"reasoning": "", "cypher": "", "parse_error": result.error})
-            except Exception as e:
-                candidates.append({"reasoning": "", "cypher": "", "error": str(e)[:200]})
+            candidates.append(
+                await _one_completion(client, model, messages, temperature, max_tokens)
+            )
     return {
         "instance_id": example["instance_id"],
         "question": example["question"],
@@ -114,11 +130,11 @@ async def main():
     ap.add_argument("--output", default="data/forward_traces.jsonl")
     args = ap.parse_args()
 
-    base_url = os.environ.get("COT_API_BASE", "https://api.cerebras.ai/v1")
+    base_url = os.environ.get("COT_API_BASE", "https://api.groq.com/openai/v1")
     api_key = os.environ.get("COT_API_KEY", "")
     if not api_key:
-        raise SystemExit("Set COT_API_KEY (Cerebras key). "
-                         "Set COT_API_BASE to override the endpoint.")
+        raise SystemExit("Set COT_API_KEY. Set COT_API_BASE to override the endpoint "
+                         "(default Groq: https://api.groq.com/openai/v1).")
 
     examples = load_db_accessible_training(args.source, args.limit)
     done = load_done(args.output)
