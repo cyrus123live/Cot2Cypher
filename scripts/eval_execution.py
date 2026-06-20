@@ -76,7 +76,8 @@ def get_driver(db_name: str) -> GraphDatabase.driver:
 MAX_RESULT_ROWS = 10000  # Cap results to avoid OOM on runaway queries
 
 
-def _execute_cypher_inner(driver, db_name: str, cypher: str) -> tuple[str | None, str | None]:
+def _execute_cypher_inner(driver, db_name: str, cypher: str,
+                          values_only: bool = False) -> tuple[str | None, str | None]:
     try:
         with driver.session(database=db_name) as session:
             result = session.run(cypher, timeout=QUERY_TIMEOUT)
@@ -87,8 +88,15 @@ def _execute_cypher_inner(driver, db_name: str, cypher: str) -> tuple[str | None
                 if count > MAX_RESULT_ROWS:
                     result.consume()
                     return None, f"too_many_rows: >{MAX_RESULT_ROWS}"
-                row = {k: record[k] for k in record.keys()}
-                rows.append(json.dumps(row, sort_keys=True, default=str))
+                if values_only:
+                    # Ignore column names: each row -> sorted list of stringified
+                    # values. Lets queries that return the same values under
+                    # different aliases match (the standard lenient exec-match).
+                    vals = sorted(str(record[k]) for k in record.keys())
+                    rows.append(json.dumps(vals, default=str))
+                else:
+                    row = {k: record[k] for k in record.keys()}
+                    rows.append(json.dumps(row, sort_keys=True, default=str))
             rows.sort()
             return "\n".join(rows), None
     except (CypherSyntaxError, ClientError) as e:
@@ -103,7 +111,8 @@ def _execute_cypher_inner(driver, db_name: str, cypher: str) -> tuple[str | None
         return None, f"other: {type(e).__name__}: {str(e)[:100]}"
 
 
-def execute_cypher(driver, db_name: str, cypher: str) -> tuple[str | None, str | None]:
+def execute_cypher(driver, db_name: str, cypher: str,
+                   values_only: bool = False) -> tuple[str | None, str | None]:
     """Execute a Cypher query with a hard wall-clock timeout.
 
     The Neo4j driver's `timeout` is a transaction timeout — it does not always
@@ -114,12 +123,16 @@ def execute_cypher(driver, db_name: str, cypher: str) -> tuple[str | None, str |
     Using a fresh executor per call ensures a hung thread can't block subsequent
     queries from running (the previous module-level single-worker pool defeated
     the timeout: cancelled-but-still-running threads blocked the next submit).
+
+    values_only=True compares result sets by VALUES, ignoring column names —
+    use it when matching queries that may use different aliases (e.g. filtering
+    forward-generated candidates against a reference).
     """
     # Do NOT use `with ThreadPoolExecutor(...)` here — its __exit__ calls
     # shutdown(wait=True), which would block until a hung worker finishes,
     # defeating the timeout. Explicit non-blocking shutdown instead.
     executor = ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(_execute_cypher_inner, driver, db_name, cypher)
+    future = executor.submit(_execute_cypher_inner, driver, db_name, cypher, values_only)
     try:
         result = future.result(timeout=HARD_TIMEOUT)
         executor.shutdown(wait=False)

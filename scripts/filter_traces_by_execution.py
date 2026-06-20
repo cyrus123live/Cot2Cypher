@@ -80,7 +80,9 @@ def main():
 
         for i, r in enumerate(pending):
             examined += 1
-            ref_result, ref_err = execute_cypher(driver, db_name, r["cypher"])
+            # values_only=True: ignore column aliases so a forward candidate
+            # that returns the right VALUES under different names still matches.
+            ref_result, ref_err = execute_cypher(driver, db_name, r["cypher"], values_only=True)
             if ref_result is None:
                 ref_failed += 1
                 log.write(json.dumps({"instance_id": r["instance_id"],
@@ -92,7 +94,7 @@ def main():
                 cy = c.get("cypher", "")
                 if not cy:
                     continue
-                res, _ = execute_cypher(driver, db_name, cy)
+                res, _ = execute_cypher(driver, db_name, cy, values_only=True)
                 if res is not None and res == ref_result:
                     chosen = c
                     break
