@@ -178,8 +178,12 @@ def run_execution_eval(predictions_path: str):
     for db, recs in sorted(by_db.items(), key=lambda x: -len(x[1])):
         print(f"    {db}: {len(recs)} instances")
 
-    # Checkpoint file
-    base = os.path.basename(predictions_path).replace("predictions_", "exec_eval_")
+    # Checkpoint file. Guard against a name collision with the input: if the
+    # filename doesn't contain "predictions_", prefix "exec_eval_" so the
+    # checkpoint path can never equal predictions_path (which would load the
+    # prediction records as bogus "completed" results).
+    base = os.path.basename(predictions_path)
+    base = base.replace("predictions_", "exec_eval_") if "predictions_" in base else f"exec_eval_{base}"
     checkpoint_path = os.path.join(os.path.dirname(predictions_path), base)
     completed = {}
     if os.path.exists(checkpoint_path):

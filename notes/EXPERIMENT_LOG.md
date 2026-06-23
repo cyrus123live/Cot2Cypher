@@ -129,10 +129,53 @@ The one untested form of CoT — verified-correct forward traces (the actual SQL
 
 ---
 
+## I. CLEAN ZOGRASCOPE redo (per-experiment splits, leakage-verified) — 2026-06-23
+
+Replaces the invalidated §F. Each experiment trained and tested within one split (no merging); both pairings verified 0% question/pair overlap.
+
+**Execution accuracy:**
+
+| Split | Direct-answer | CoT | Δ (direct − CoT) |
+|-------|:---:|:---:|:---:|
+| IID | 0.8255 (634/768) | 0.6094 (468/768) | +0.216 |
+| Compositional | 0.6612 (892/1349) | 0.4181 (564/1349) | +0.243 |
+| **Length (distribution shift)** | **0.4397 (551/1253)** | 0.2306 (289/1253) | **+0.209** |
+
+**Direct-answer wins every clean split, including length — the last place CoT could have won.** Degradation IID→length is ~38pp for *both* (direct 82.6→44.0, CoT 60.9→23.1) — same rate, so "CoT degrades gracefully" is also false. The leaked §F numbers (length 71%/32%) were inflated artifacts.
+
+Files: `results/pred_zog_{length,regular}_{cot,baseline}.jsonl`, `results/zog_clean_exec.log`.
+
+## J. STaR execution-filtered CoT — RESULT (2026-06-23) ✅ negative
+
+Trained both arms on the same 3,938 execution-verified instances (only reasoning prefix differs — the STaR-SQL design). Eval on Neo4j test (exec, n=2,471):
+
+| Arm | Exec EM | Pred errors |
+|-----|:---:|:---:|
+| Direct (verified cypher only) | **0.1052 (260/2471)** | 153 |
+| CoT (verified reasoning + cypher) | 0.0939 (232/2471) | 246 |
+
+**Even verified-correct reasoning traces — the actual SQL-paper ingredient — do not help.** CoT −1.1pp and 60% more broken queries. Refutes the "you never used execution filtering" objection. (Low absolutes: 3,938-example training in teacher's Cypher style; comparison is internally clean.)
+
+Value-only filter keep rate: **57.6%** (3,938/6,833) — comparable to STaR-SQL's ~50%, so forward Cypher generation is NOT meaningfully harder than SQL.
+
 ## Bottom line
 
-- **CoT distillation does not help Text2Cypher** in any clean comparison tested: 2 model families, in-distribution, on GLEU/StrEM/ExecEM. It modestly hurts.
-- **The original "+0.1227 GLEU from CoT" was the pipeline, not CoT.** Confirmed by the matched direct-answer control (A5).
-- **Execution-based selection (B2) beats string voting (B1)** — a small positive, mechanistically consistent.
-- **ZOGRASCOPE results are all invalid (leakage); the clean length-split redo is the key open experiment** — the last place CoT could earn a positive.
-- **Still pending:** Gemma direct-answer exec EM (A5); STaR execution-filtered CoT (G); clean ZOGRASCOPE length redo (F); Neo4j harness calibration (reproduce 0.5560).
+**CoT distillation does not help Text2Cypher in ANY clean comparison — six now, all negative:**
+
+| # | Comparison | Metric | Direct | CoT | Winner |
+|---|-----------|:------:|:------:|:---:|:------:|
+| 1 | Neo4j Gemma (naive CoT) | GLEU | 0.7854 | 0.7682 | direct |
+| 2 | Neo4j Llama (naive CoT) | GLEU | 0.7680 | 0.7416 | direct |
+| 3 | Neo4j STaR (verified CoT) | Exec | 0.1052 | 0.0939 | direct |
+| 4 | ZOGRASCOPE IID | Exec | 0.8255 | 0.6094 | direct |
+| 5 | ZOGRASCOPE compositional | Exec | 0.6612 | 0.4181 | direct |
+| 6 | ZOGRASCOPE length (dist. shift) | Exec | 0.4397 | 0.2306 | direct |
+
+- In-distribution, compositional, and length-generalization; naive AND execution-verified CoT; two model families; two benchmarks. **No regime where CoT helps.**
+- The original "+0.1227 GLEU from CoT" was the pipeline, not CoT (matched control A5).
+- **Execution-based selection (B2) beats string voting (B1)** — the one small positive transfer-study finding.
+- The "ZOGRASCOPE SOTA on length" was a leakage artifact; the clean redo reverses it.
+
+**Remaining (optional / calibration):** Gemma direct-answer exec EM (A5); Neo4j harness calibration (reproduce published 0.5560). Neither can change the conclusion.
+
+**The honest paper:** *"Chain-of-thought distillation does not improve Text2Cypher — in-distribution or under distribution shift, with naive or execution-verified traces, across two model families. Apparent gains in prior framing were a stronger SFT recipe and a leaked benchmark split. Among Text-to-SQL techniques, only execution-based selection transfers; diversity- and reasoning-based methods do not, consistent with Cypher's constrained output space."*
