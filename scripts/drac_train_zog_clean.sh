@@ -31,12 +31,15 @@
 set -e
 : "${EXPERIMENT:?set EXPERIMENT=length|regular}"
 : "${MODE:?set MODE=cot|baseline}"
+# Optional VARIANT (e.g. "holistic" for Test D). Empty = default QDecomp CoT.
+VARIANT="${VARIANT:-}"
+SUF=""; [ -n "$VARIANT" ] && SUF="_${VARIANT}"
 
 export PROJECT=~/scratch
 export HF_CACHE=~/scratch/hf_cache
 
-TRAIN_FILE=~/scratch/cot_train_${EXPERIMENT}.jsonl
-OUT_DIR=~/scratch/zog_${EXPERIMENT}_${MODE}_adapter
+TRAIN_FILE=~/scratch/cot_train_${EXPERIMENT}${SUF}.jsonl
+OUT_DIR=~/scratch/zog_${EXPERIMENT}_${MODE}${SUF}_adapter
 if [ "$MODE" = "cot" ]; then
     PY=drac_train_zograscope.py        # trains reasoning+cypher, CoT prompt
 else

@@ -31,13 +31,15 @@
 set -e
 : "${EXPERIMENT:?set EXPERIMENT=length|regular}"
 : "${MODE:?set MODE=cot|baseline}"
+VARIANT="${VARIANT:-}"
+SUF=""; [ -n "$VARIANT" ] && SUF="_${VARIANT}"
 
 export PROJECT=~/scratch
 export HF_CACHE=~/scratch/hf_cache
 
-ADAPTER=~/scratch/zog_${EXPERIMENT}_${MODE}_adapter/final
+ADAPTER=~/scratch/zog_${EXPERIMENT}_${MODE}${SUF}_adapter/final
 TEST_FILE=~/scratch/test_${EXPERIMENT}.jsonl
-OUT_DIR=~/scratch/results_zog_${EXPERIMENT}_${MODE}
+OUT_DIR=~/scratch/results_zog_${EXPERIMENT}_${MODE}${SUF}
 PROMPT_FLAG=""
 [ "$MODE" = "baseline" ] && PROMPT_FLAG="--no-cot-prompt"
 
