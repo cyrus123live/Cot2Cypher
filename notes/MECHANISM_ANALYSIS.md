@@ -79,6 +79,49 @@ identification.
 Either outcome sharpens the claim. Implemented as the `prompts_holistic` reasoning
 format + STaR-style regeneration/retrain.
 
+## Test D RESULT — holistic-path ablation (causal, 2026-06-25)
+
+Trained a CoT variant whose reasoning states the full connected path explicitly
+(no sub-question decomposition), same clean ZOGRASCOPE splits, same pipeline.
+Three-way execution accuracy on common instances:
+
+| Split | direct | QDecomp-CoT | holistic-CoT | holistic−QDecomp | holistic−direct |
+|-------|:------:|:-----------:|:------------:|:----------------:|:---------------:|
+| length (n=1052) | 0.475 | 0.258 | 0.303 | **+0.046** | −0.172 |
+| iid (n=768) | 0.826 | 0.609 | 0.710 | **+0.100** | −0.116 |
+| compositional (n=1349) | 0.661 | 0.418 | 0.511 | **+0.093** | −0.151 |
+
+**Holistic-CoT beats QDecomp-CoT on every split (+4.6 to +10.0pp), recovering
+~40% of the CoT penalty in-distribution.** Decomposition is causally a major
+part of the harm. But holistic-CoT still trails direct-answer (−12 to −17pp):
+removing decomposition is necessary but not sufficient.
+
+**Mechanism confirmed and localized.** The gain comes specifically from reduced
+path fragmentation:
+
+| | QDecomp fragments path | holistic fragments path |
+|--|:---:|:---:|
+| length | 11% | **2%** (5.5× fewer) |
+| regular | 6% | **1%** (6× fewer) |
+
+Holistic reasoning cuts the "split one connected path into disconnected MATCH
+clauses" failure ~5–6×. But hop-truncation is unchanged (avg hops length: ref
+3.02, QDecomp 2.45, holistic 2.37) — holistic does NOT fix dropped hops.
+
+**Final causal picture (two separable sub-mechanisms):**
+1. **Decomposition → fragmentation.** QDecomp's sub-question structure makes the
+   model split connected traversals into disconnected MATCH clauses. Causally
+   confirmed: holistic reasoning removes the decomposition and cuts fragmentation
+   5–6×, recovering ~40% of the penalty.
+2. **Residual reasoning cost + truncation.** Even holistic reasoning (a) doesn't
+   fix hop-truncation and (b) carries a cost of generating reasoning before the
+   answer. This is why holistic-CoT still trails direct-answer.
+
+So: chain-of-thought hurts Text2Cypher because its decompositional bias fragments
+connected graph patterns (causally shown) AND reasoning-before-answer carries a
+residual cost; direct-answer SFT, which learns the connected pattern holistically
+in one shot, avoids both.
+
 ## Caveats
 
 - String-EM used for Test A binning; B/C use execution ground truth.
