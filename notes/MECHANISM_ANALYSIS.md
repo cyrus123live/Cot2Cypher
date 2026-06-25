@@ -122,6 +122,44 @@ connected graph patterns (causally shown) AND reasoning-before-answer carries a
 residual cost; direct-answer SFT, which learns the connected pattern holistically
 in one shot, avoids both.
 
+## Dropped-hops diagnostics (E1/E2-pre/E3) — 2026-06-25
+
+The half Test D did NOT fix is hop-truncation. Diagnostics on the holistic-CoT
+predictions (which still truncate: avg hops length ref 3.02 vs holistic 2.37):
+
+**E1 — where is the hop lost? PLANNING, 99–100%.** Of dropped-hop failures, the
+reasoning ITSELF omits the hop (392/394 length, 217/218 regular); the query
+faithfully follows the truncated reasoning. The model reasons out a shorter path
+— it is not a reasoning→query translation error.
+
+**E2-pre — which hop?** Dropped hops are mid-path (43%) and terminal (48%), rarely
+the starting anchor (9%). Type is ~50/50 connector (no filter) vs filtered node —
+so it is NOT just "unanchored connectors drop out"; the model shortens paths even
+through named/filtered nodes.
+
+**E3 — repair/subpath test.** 93% of dropped-hop failures have a predicted path
+that is a clean in-order SUBPATH of the reference — everything else (included hops,
+order, filters) is correct; the only error is the missing hop(s). Truncation is
+causally THE error, not one symptom among compounding ones.
+
+**Conclusion:** on long paths the model's reasoning commits to a correct-but-too-
+short path (right structure/filters, a hop or two missing mid/end). Because it is
+a planning failure (E1) and the rest is correct (E3), the fix must force the
+reasoning to commit to the full relationship list up front → motivates E4.
+
+## E4 — holistic + explicit relationship enumeration (in progress)
+
+Reasoning that FIRST enumerates and counts every required relationship in order
+("Relationships needed (3): KNOWS_SN -> PARTY_TO -> OCCURRED_AT"), keeps the
+holistic connected-path framing (which fixed fragmentation in Test D), then
+constructs using exactly that many hops. Targets BOTH sub-mechanisms:
+fragmentation (holistic) + truncation (enumeration).
+- If E4 closes the gap to direct-answer → POSITIVE result: "CoT can match
+  direct-answer for Cypher with holistic, hop-enumerated reasoning."
+- If E4 fixes truncation but still trails → residual reasoning-before-answer cost.
+Format verified: teacher states the relationship count matching reference hops
+20/20 in pilot. Variant plumbing: `--enum` (generation), `VARIANT=enum` (train/eval).
+
 ## Caveats
 
 - String-EM used for Test A binning; B/C use execution ground truth.

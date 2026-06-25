@@ -36,8 +36,9 @@ from generate_cot.exemplars_zograscope import POLE_SCHEMA_TEXT
 from generate_cot.parse import parse_response, validate_result
 from generate_cot.prompts_zograscope import build_messages_zograscope
 from generate_cot.prompts_holistic_zograscope import build_messages_holistic_zograscope
+from generate_cot.prompts_enum_zograscope import build_messages_enum_zograscope
 
-# Selected in main() via --holistic; default is the QDecomp+InterCOL builder.
+# Selected in main() via --holistic / --enum; default is the QDecomp+InterCOL builder.
 BUILD_MESSAGES = build_messages_zograscope
 
 
@@ -190,11 +191,16 @@ async def main():
     parser.add_argument("--output", type=str, default=OUTPUT_PATH)
     parser.add_argument("--no-length", action="store_true", help="Skip length-generalization training set")
     parser.add_argument("--holistic", action="store_true",
-                        help="Test D: use holistic-path reasoning (no QDecomp) instead of QDecomp+InterCOL")
+                        help="Test D: holistic-path reasoning (no QDecomp)")
+    parser.add_argument("--enum", action="store_true",
+                        help="E4: holistic + explicit relationship enumeration (targets dropped hops)")
     args = parser.parse_args()
 
     global BUILD_MESSAGES
-    if args.holistic:
+    if args.enum:
+        BUILD_MESSAGES = build_messages_enum_zograscope
+        print("Reasoning format: HOLISTIC + ENUMERATION (E4 ablation)")
+    elif args.holistic:
         BUILD_MESSAGES = build_messages_holistic_zograscope
         print("Reasoning format: HOLISTIC-PATH (Test D ablation)")
     else:
