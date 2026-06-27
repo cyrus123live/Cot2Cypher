@@ -160,6 +160,57 @@ fragmentation (holistic) + truncation (enumeration).
 Format verified: teacher states the relationship count matching reference hops
 20/20 in pilot. Variant plumbing: `--enum` (generation), `VARIANT=enum` (train/eval).
 
+## E4 RESULT — enumeration does NOT close the gap (2026-06-27)
+
+Full ablation ladder, execution accuracy (common instances):
+
+| Config | length | iid | compositional |
+|--------|:------:|:---:|:-------------:|
+| direct-answer | 0.475 | 0.826 | 0.661 |
+| QDecomp-CoT | 0.258 | 0.609 | 0.418 |
+| **Holistic-CoT** | **0.303** | **0.710** | **0.511** |
+| Enum-CoT (E4) | 0.231 | 0.669 | 0.429 |
+
+Truncation diagnostic (length, hop deficit vs reference 3.02 / regular vs 2.12):
+
+| Config | length deficit | regular deficit | fragmentation (length) |
+|--------|:---:|:---:|:---:|
+| QDecomp | +0.57 | +0.06 | 11% |
+| Holistic | +0.64 | +0.10 | 2% |
+| Enum(E4) | +0.58 | **+0.01** | 3% |
+
+**Enumeration FAILED to close the gap — it underperforms Holistic everywhere.**
+Findings:
+1. Enumeration fixes truncation only on SHORT paths (regular deficit +0.06→+0.01,
+   best of any arm) but NOT on long paths (length +0.57→+0.58, unchanged). Telling
+   the model "you need 3 relationships" does not make it produce 3 correct hops
+   when the path is long — the planning-stage shortening (E1) is deeper than a
+   counting prompt can fix.
+2. The added enumeration scaffolding has a COST: reintroduces fragmentation
+   (3% vs Holistic's 2%) and loses accuracy vs Holistic on every split. Listing-
+   then-building partially recreates the decompose-then-assemble problem Holistic
+   avoids. More reasoning structure ≠ better; minimal holistic framing is best.
+3. **No reasoning-format intervention closes the gap to direct-answer.** Holistic
+   (minimal connected-path) is the CoT ceiling and still trails by 12–17pp.
+
+## Final conclusion (mechanism, fully bounded)
+
+The CoT penalty for Text2Cypher decomposes into:
+- **Fragmentation** — splitting connected paths into disconnected MATCH clauses.
+  CAUSED by decomposition; FIXED by holistic framing (recovers +4.6–10pp, cuts
+  fragmentation 5–6×). [Test D]
+- **Truncation** — planning a correct-but-too-short path on long traversals. A
+  planning-stage failure (99–100%, E1); 93% are clean subpaths (E3). RESISTS
+  prompt intervention: enumeration fixes it on short paths only, and costs more
+  than it saves on long ones. [E4]
+- **Residual** — even the best reasoning format trails direct-answer; the deficit
+  is intrinsic to generating reasoning before a connected graph pattern.
+
+Direct-answer SFT wins by learning the connected pattern holistically in one shot,
+incurring none of the three. **The negative result is not just empirical but
+mechanistically explained and bounded: we identify the failure modes, causally fix
+the fixable one, and show the other resists the natural intervention.**
+
 ## Caveats
 
 - String-EM used for Test A binning; B/C use execution ground truth.
