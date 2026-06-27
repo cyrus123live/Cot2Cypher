@@ -33,17 +33,31 @@ from trl import SFTConfig, SFTTrainer
 
 class CompletionOnlyCollator:
     """Mask loss before the assistant response template. Handles both raw-text
-    features and pre-tokenized features (newer TRL pre-tokenizes the dataset)."""
+    features and pre-tokenized features (newer TRL pre-tokenizes the dataset).
 
-    def __init__(self, tokenizer, response_template: str, max_length: int):
+    If mask_prompt=False, computes FULL-SEQUENCE loss (every non-pad token,
+    prompt included) instead of completion-only. This matches Neo4j's published
+    recipe (SFTTrainer with dataset_text_field + packing=True, no completion-only
+    collator — verified from neo4j-labs/text2cypher finetuning notebooks). It is
+    the 1c ablation toggle: the ONLY variable vs the A5 direct-answer baseline,
+    isolating how much of the +0.14 GLEU gap is the loss-masking choice."""
+
+    def __init__(self, tokenizer, response_template: str, max_length: int,
+                 mask_prompt: bool = True):
         self.tokenizer = tokenizer
         self.response_template_ids = tokenizer.encode(
             response_template, add_special_tokens=False
         )
         self.max_length = max_length
+        self.mask_prompt = mask_prompt
 
     def _build_labels(self, input_ids, attention_mask):
         labels = input_ids.clone()
+        if not self.mask_prompt:
+            # Full-sequence LM loss: loss on all tokens except padding (the
+            # schema-heavy prompt dominates the gradient, as in Neo4j's recipe).
+            labels[attention_mask == 0] = -100
+            return labels
         rt = self.response_template_ids
         rt_len = len(rt)
         for i, ids in enumerate(input_ids):
@@ -105,6 +119,13 @@ def main():
     parser.add_argument("--output-dir", required=True, help="Adapter output directory")
     parser.add_argument("--hf-cache", default=None, help="HuggingFace cache directory")
     parser.add_argument("--num-epochs", type=int, default=1, help="Training epochs")
+    parser.add_argument(
+        "--full-sequence",
+        action="store_true",
+        help="Train with FULL-SEQUENCE LM loss (no prompt masking), matching "
+        "Neo4j's published recipe. Default is completion-only masking. This is "
+        "the 1c ablation: the only variable vs the A5 direct-answer baseline.",
+    )
     args = parser.parse_args()
 
     # Load training data — ignore the reasoning field; train on (q, schema) -> cypher
@@ -166,6 +187,15 @@ def main():
         tokenizer=tokenizer,
         response_template=response_template,
         max_length=1600,
+        mask_prompt=not args.full_sequence,
+    )
+    print(
+        "Loss masking: "
+        + (
+            "FULL-SEQUENCE (prompt+answer) [1c ablation — matches Neo4j recipe]"
+            if args.full_sequence
+            else "completion-only (answer tokens only) [A5 baseline]"
+        )
     )
 
     sft_kwargs = dict(

@@ -158,6 +158,33 @@ Trained both arms on the same 3,938 execution-verified instances (only reasoning
 
 Value-only filter keep rate: **57.6%** (3,938/6,833) — comparable to STaR-SQL's ~50%, so forward Cypher generation is NOT meaningfully harder than SQL.
 
+## K. The +0.14 training gap — loss masking (2026-06-27)
+
+Why our direct-answer Gemma (A5, GLEU 0.7854) beats Neo4j's published adapter (0.5560) by +0.23,
+and beats their adapter under identical inference (A2, 0.6455) by +0.14, despite "same QLoRA config."
+
+**Decomposition of the +0.23-over-published:**
+- **+0.09 = eval harness** (same weights: A2 0.6455 vs published 0.5560) — no inference truncation
+  (we keep full schemas; they truncate at 1600) + GLEU tokenizer sensitivity (~0.16 swing on
+  tokenization alone for the same predictions). Measurement, not a better model.
+- **+0.14 = training** (A5 0.7854 vs A2 0.6455). The configs are NOT the same in the decisive place:
+  **loss masking.**
+
+**1a (verified):** Neo4j's public recipe (`neo4j-labs/text2cypher` StarCoder2/CodeLlama notebooks)
+uses `SFTTrainer(dataset_text_field="text", packing=True, ...)` with **no completion-only collator**
+→ **full-sequence loss**, schema in the system message. The Gemma-2024v1 card lists an `SFTConfig`
+with no collator named (consistent; exact notebook not public). Our pipeline uses
+`DataCollatorForCompletionOnlyLM` (loss on answer tokens only). With ~30:1 schema:answer token ratio,
+their loss is ~97% schema-reconstruction; ours is 100% Cypher — a mechanism fully consistent with +0.14.
+
+**Reality checks:** not leakage (A5 scores 0.59 EM on *unseen* vs 0.17 on seen, §C); GLEU-inflated
+(exec-EM gap vs published Gemma 0.2104 is only ~+0.05–0.08 — the believable semantic margin).
+
+**1c (pending):** `--full-sequence` ablation on the A5 trainer (only the loss mask differs).
+Scripts: `drac_train_gemma_fullseq.sh` / `drac_gemma_fullseq_eval.sh`. If GLEU drops 0.7854 → ~0.64,
+masking is confirmed as THE driver. **Reframes the headline:** the gain mis-attributed to CoT was a
+stronger direct-answer SFT recipe (completion-only masking on long-schema inputs).
+
 ## Bottom line
 
 **CoT distillation does not help Text2Cypher in ANY clean comparison — six now, all negative:**
