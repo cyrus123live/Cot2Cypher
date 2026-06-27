@@ -211,6 +211,83 @@ incurring none of the three. **The negative result is not just empirical but
 mechanistically explained and bounded: we identify the failure modes, causally fix
 the fixable one, and show the other resists the natural intervention.**
 
+## CORRECTION — truncation is NOT the primary cause; filter-value corruption is (2026-06-27)
+
+Prompted by the question "if E4 couldn't verify truncation, is it even the cause?",
+a proper decomposition of ALL holistic-CoT failures (n≈1200, execution ground
+truth) overturns the truncation framing:
+
+| Failure attribute (non-exclusive) | share |
+|-----------------------------------|:-----:|
+| truncation ALONE (no co-occurring error) | **2%** |
+| has truncation (with other errors) | 31% |
+| wrong filter VALUE | (CoT-specific, see below) |
+| wrong RETURN | 21% |
+
+**Truncation alone explains only 2%.** E4 corroborated behaviorally: it fixed
+truncation on the regular split (hop deficit +0.06→+0.01) yet accuracy still
+dropped. The truncation framing is dead.
+
+### The robust CoT-specific culprit: filter-value corruption
+
+Variable-name-independent value-set comparison (robust):
+
+| Split | CoT wrong filter-values | direct-answer | ratio |
+|-------|:-----------------------:|:-------------:|:-----:|
+| length | 16% | 4% | 3.7× |
+| regular | 5% | 1% | 5.0× |
+
+**92% of CoT's wrong values already appear in its reasoning trace** — the value
+is corrupted DURING reasoning, then copied into the query. Examples: question
+"vehicle-related crimes in BL5" → reference filters only `BL5`, CoT invents a
+spurious `"vehicle"` filter; "crimes at homes" → CoT adds `"home"`. ZOGRASCOPE
+hands the entity values to the model (e.g. `[Person] = Bonnie`); direct-answer
+copies them straight to the query in one pass, CoT re-states them in prose first
+and each re-statement risks corruption.
+
+**Honesty bounds (do NOT over-claim):**
+- The sub-type is mixed: of value mismatches, ~14% add spurious values, ~21% swap,
+  ~65% drop. No single clean sub-mechanism ("over-constraining") dominates.
+- Filter-value errors are CoT-specific and 4× worse, but touch only ~16% of length
+  predictions — they do NOT explain the whole 73%→52% gap. The remainder is
+  diffuse: right relationships, right values, subtly wrong assembly.
+
+### Unifying interpretation (error accumulation on a copy-and-place task)
+
+ZOGRASCOPE is largely a COPYING task — values are handed to the model; the job is
+placing them in the right structural slots. Direct-answer does this copy in one
+pass. CoT re-states everything (values, paths, structure) in prose reasoning first,
+and every re-statement is a chance to corrupt/add/drop/swap — error accumulation in
+a generation chain. Filter-value corruption (4×) is the clearest fingerprint; the
+diffuse remainder is the same effect spread across structure. This is why MORE
+reasoning made it strictly worse (Enum < Holistic < direct) and the MINIMAL
+reasoning format (Holistic) was the best CoT variant. Reasoning-before-answer is a
+liability, not an asset, for copy-and-place query generation.
+
+## Why this differs from the famous Text-to-SQL CoT results
+
+1. **The SQL evidence is thinner than its headlines.** The cleanest clean
+   comparison (STaR-SQL, small model, CoT-SFT vs direct-SFT, same data) is just
+   **+6.4pp** (68.6→75.0); the famous "+18pp" was the ORM verifier doing
+   best-of-N@16. Most other celebrated results PROMPT frontier models or BUNDLE
+   CoT with RL/DPO. So the gap to explain is ~+6pp SQL vs −15pp Cypher, structural.
+2. **Decomposition fits SQL, fragments Cypher.** [verified, Test D] SQL is
+   compositional (clauses/subqueries/CTEs) — sub-question decomposition maps onto
+   it. Cypher's MATCH is a single connected pattern; decomposition fragments it.
+3. **Constrained output space.** [verified, self-consistency] SQL has many
+   equivalent forms → room for reasoning to explore and for verifiers to select
+   (where STaR's real gain came from). Cypher is canonical; string-voting failed,
+   only execution-voting helped slightly. The selection mechanism behind SQL's big
+   numbers has little to select over in Cypher.
+4. **Copy-and-place vs infer-and-compute.** [partially verified] SQL benchmarks
+   require inferring literal values (cell matching, units) — reasoning helps.
+   ZOGRASCOPE hands values over; reasoning keeps the corruption downside, loses the
+   inference upside.
+5. **Caveat (about us, not just Cypher):** our direct-answer baseline is unusually
+   strong, compressing headroom. CoT helps most when the task is hard relative to
+   the base model; a weaker baseline could show CoT "helping" — exactly the
+   illusion the confounded baseline created before the matched control.
+
 ## Caveats
 
 - String-EM used for Test A binning; B/C use execution ground truth.

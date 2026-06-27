@@ -1,6 +1,20 @@
 # Complete Experiment Log
 
-Compiled 2026-06-20. Every experiment run, with results and current validity status.
+Compiled 2026-06-20 (updated 2026-06-27). Every experiment run, with results and current validity status.
+
+**Update 2026-06-27 — reasoning-format ablations + mechanism (see notes/MECHANISM_ANALYSIS.md):**
+Clean ZOGRASCOPE ablation ladder (execution accuracy, length / iid / comp):
+direct 0.475/0.826/0.661 · QDecomp-CoT 0.258/0.609/0.418 · Holistic-CoT (Test D)
+0.303/0.710/0.511 · Enum-CoT (E4) 0.231/0.669/0.429. Holistic (minimal connected-
+path reasoning) is the best CoT variant but still trails direct by 12–17pp; no
+reasoning-format intervention closes the gap. Mechanism: NOT truncation (alone
+explains 2%); the robust CoT-specific culprit is filter-value corruption during
+reasoning (4× direct, 92% corrupted in the trace), within a broader error-
+accumulation effect on what is largely a copy-and-place task (more reasoning →
+strictly worse). Differs from SQL because SQL's clean CoT-SFT gain is only ~+6pp
+(rest is verifiers/RL), decomposition fits SQL's compositional structure but
+fragments Cypher's connected patterns, and Cypher's canonical output space leaves
+nothing for diversity/selection methods to exploit.
 
 **Reading guide for validity tags:**
 - ✅ **VALID** — clean, controlled, trustworthy.
