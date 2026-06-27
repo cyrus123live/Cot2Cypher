@@ -1525,3 +1525,71 @@ Script: `scripts/eval_execution_selection.py`. Result: `results/exec_select_cot_
 ## Status of the STaR-style execution-filtered CoT experiment
 
 Forward-generation pipeline (teacher derives Cypher without seeing the answer, then execution-filter) built: `generate_cot/prompts_forward.py`, `generate_forward_traces.py`. vLLM-on-DRAC failed to install (opencv-noinstall); pivoted to API generation. Cerebras pilot proved trace quality is good but hit hard rate limits (~250hr extrapolated for the full 22k×4). Pending: switch to Groq + rate-limit backoff, then full forward run → execution-filter → retrain.
+
+---
+
+# CoT as a Compositional Prior — the cross-formalism direction (started 2026-06-27)
+
+## Why pivot again
+
+The transfer-study framing ("which SQL techniques transfer to Cypher") + the constrained-output-space hypothesis is honest but **Findings-tier**: most individual techniques (self-correction, GRPO, schema filtering) have *already* been done on Cypher by Neo4j/MDPI, so "we applied technique X to Cypher" is not a top-conference contribution. The negative result + mechanism is solid but reads as a domain result.
+
+The bigger, falsifiable claim hiding in the mechanism work (`notes/MECHANISM_ANALYSIS.md`, Test D/E4): **chain-of-thought is a compositional prior.** It helps structured generation in proportion to how *compositional* the target is, and *hurts* when the target is a single jointly-constrained ("holistic") object that must be assembled as a whole.
+- **SQL composes** (sub-queries, CTEs, joins) → decomposition is the right inductive bias → CoT helps (Tai et al.; STaR-SQL — biggest gains on hard/compositional queries).
+- **A Cypher graph pattern is one connected object** → decomposition *fragments* it (Test D: holistic reasoning recovers ~40% of the penalty by NOT decomposing) → CoT hurts (our matched result, 6/6).
+
+This reframes the Cypher negative result from "a domain quirk" into the dramatic case study of a **general theory of when CoT helps structured generation** — speaking to the field-wide "when/why does reasoning help" question. That is a main-track-shaped claim.
+
+### The anchoring mechanism (the deep version)
+E1 (`notes/MECHANISM_ANALYSIS.md`): on long paths the CoT model's *reasoning* commits to a correct-but-too-short path during planning (99–100%), and the query faithfully follows. CoT **anchors** the model to a wrong *global structure* before it generates. For outputs whose global shape must be decided jointly (graph patterns), premature token-by-token commitment in the reasoning is harmful; for compositional outputs it is not. "Reasoning anchors structured generation" is the framing that generalizes beyond queries.
+
+## The experiment: matched direct-vs-CoT across formalisms, ONE pipeline
+
+The whole point is apples-to-apples: same base model (Gemma-2-9B-it), same QLoRA config, same completion-only-masking recipe, same CoT-distillation method (gpt-oss-120b teacher), **only the training target differs** (direct query vs reasoning+query), run **in our own pipeline** for every formalism. We do NOT rely on other papers' SQL/SPARQL numbers — that was the original confound.
+
+| Formalism | Output structure | Predicted CoT effect | Status |
+|-----------|------------------|----------------------|--------|
+| SQL (`gretelai/synthetic_text_to_sql`) | compositional (joins / sub-queries) | **helps** (positive control) | ▶ FIRST TEST (this commit) |
+| Cypher (Neo4j, ZOGRASCOPE) | connected graph pattern (holistic) | **hurts** | ✅ done (−0.017 GLEU; ZOG clean −0.21 exec) |
+| SPARQL (LC-QuAD 2.0) | BGP = connected triple pattern (holistic) | **hurts** (like Cypher) | ▶ FIRST TEST (this commit) |
+| (later) regex / logical forms / nested JSON | spans the axis | tests the predictor | queued |
+
+**The two controls must BOTH land for the paper to work:** SQL must show CoT *helps*
+(positive delta) AND SPARQL must show CoT *hurts* (negative delta). One direction alone
+is not evidence of a *predictor*. SQL is the riskier control — CoT helping SQL is
+established in the literature, but it must replicate *in our matched completion-only-masking
+pipeline*, where the strong direct-answer recipe may already absorb the gain. So we build and
+run both at once. SQL dataset chosen for inline schema (mirrors Cypher), compositional queries
+(joins/sub-queries — required or CoT has nothing to help with), and `sql_complexity` strata
+(lets us show the CoT gain scales with complexity). Canonical **Spider** is a later add once
+the direction is validated.
+
+**SPARQL is the cheap, decisive first test**: it is graph-structured like Cypher (a basic graph pattern is a connected set of triples) but a *different* surface language. If CoT hurts SPARQL too, the "holistic/connected → CoT hurts" prediction generalizes beyond Cypher's specific syntax — strong early evidence for the theory. If CoT *helps* SPARQL, the theory is in trouble and we fall back to the Cypher Findings paper.
+
+**The floor is secured:** the Cypher negative result + mechanism + recipe finding survives regardless. The cross-formalism experiments are pure upside — if the theory generalizes, top-tier; if not, Findings.
+
+## Pilot — files (this commit): SPARQL (negative-predicted) + SQL (positive control)
+
+Both formalisms share the identical script pattern (mirrors the Gemma baselines): a CoT
+trace generator (gpt-oss-120b via the same `generate_cot.config` provider used for Cypher/ZOG),
+a self-contained `--variant {direct,cot}` train+eval, and a SLURM "test file" that trains both
+arms, evals both, and prints the CoT delta. Both variants train on the SAME instances (rows
+with valid reasoning), so only the training target differs.
+
+**SPARQL (predict CoT hurts):**
+- `scripts/generate_cot_sparql.py` — LC-QuAD 2.0 loader + CoT trace generation. `--prepare-test` dumps the test split (no API).
+- `scripts/drac_train_sparql.py` — train+eval, GLEU + string EM.
+- `scripts/drac_sparql.sh` — SLURM orchestrator.
+- Dataset: LC-QuAD 2.0 (`lc_quad` on HF), ~24k train / 6k test over Wikidata. Caveat: Wikidata IDs (`wd:Q…`, `wdt:P…`) are opaque so absolute accuracy is lower, but the **direct-vs-CoT delta is valid** (both arms face the same entity-linking challenge; only the reasoning prefix differs).
+
+**SQL (positive control — predict CoT helps):**
+- `scripts/generate_cot_sql.py` — `gretelai/synthetic_text_to_sql` loader (inline schema) + CoT trace generation. `--prepare-test` dumps the test split.
+- `scripts/drac_train_sql.py` — train+eval, GLEU + string EM **+ per-`sql_complexity` EM breakdown** (the gain should scale with compositional complexity).
+- `scripts/drac_sql.sh` — SLURM orchestrator.
+
+Quick first run: generate ~5k traces per formalism (`--limit 5000`), translation metrics (GLEU + EM). Execution-based eval (Wikidata endpoint / SQLite) is a later add if the deltas land as predicted.
+
+## Next (only if SPARQL supports the theory)
+1. Reconstruct the **SQL positive control** in-pipeline (Spider, same recipe) — predict CoT *helps*; anchors the compositional end of the axis with our own numbers.
+2. Add a formalism spanning the middle (regex = holistic; logical forms / nested JSON = compositional).
+3. Operationalize a **compositionality measure** of the target (degree of independent-subpart decomposability vs joint global constraint) and show the CoT delta tracks it — "show the math."
