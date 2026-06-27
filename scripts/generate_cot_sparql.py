@@ -125,7 +125,8 @@ def parse_sparql_trace(raw_text: str) -> tuple[str, str]:
 def _clean_nl(row: dict) -> str | None:
     for field in ("question", "paraphrased_question", "NNQT_question"):
         v = (row.get(field) or "").strip()
-        if v and v.lower() not in ("n/a", "na", "null", "none", "{}"):
+        # reject empties and templated forms still containing {placeholders}
+        if v and v.lower() not in ("n/a", "na", "null", "none") and "{" not in v and "}" not in v:
             return v
     return None
 
@@ -133,7 +134,9 @@ def _clean_nl(row: dict) -> str | None:
 def load_lcquad(split: str) -> list[dict]:
     from datasets import load_dataset
 
-    ds = load_dataset("lc_quad", split=split)
+    # lc_quad ships a loading script (unsupported in datasets>=3); the HF
+    # auto-converted parquet branch has identical columns and loads cleanly.
+    ds = load_dataset("lc_quad", revision="refs/convert/parquet", split=split)
     examples = []
     for i, row in enumerate(ds):
         nl = _clean_nl(row)
