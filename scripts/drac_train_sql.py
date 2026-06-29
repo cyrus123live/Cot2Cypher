@@ -203,7 +203,7 @@ def evaluate(args):
     print(f"[{args.variant}] Test set: {len(examples)} examples")
 
     os.makedirs(args.output_dir, exist_ok=True)
-    pred_path = os.path.join(args.output_dir, f"predictions_sql_{args.variant}.jsonl")
+    pred_path = os.path.join(args.output_dir, f"predictions_{args.tag}_{args.variant}.jsonl")
     done = 0
     if os.path.exists(pred_path):
         with open(pred_path) as f:
@@ -229,6 +229,7 @@ def evaluate(args):
             for ex, raw in zip(batch, raws):
                 out_f.write(json.dumps({
                     "instance_id": ex.get("instance_id", ""),
+                    "db_id": ex.get("db_id", ""),  # for Spider execution eval
                     "predicted_sql": parse_sql(raw),
                     "reference_sql": ex["sql"],
                     "sql_complexity": ex.get("sql_complexity", "unknown"),
@@ -259,7 +260,7 @@ def evaluate(args):
 
     metrics = {"variant": args.variant, "n": len(recs), "gleu": gleu,
                "string_em": em / len(recs), "em_count": em, "per_complexity": per_complexity}
-    with open(os.path.join(args.output_dir, f"metrics_sql_{args.variant}.json"), "w") as f:
+    with open(os.path.join(args.output_dir, f"metrics_{args.tag}_{args.variant}.json"), "w") as f:
         json.dump(metrics, f, indent=2)
     print(f"\n[{args.variant}] GLEU={gleu:.4f}  String EM={em/len(recs):.4f} ({em}/{len(recs)})")
     for cx, s in per_complexity.items():
@@ -277,6 +278,8 @@ def main():
     p.add_argument("--hf-cache", default=None)
     p.add_argument("--num-epochs", type=int, default=1)
     p.add_argument("--batch-size", type=int, default=8)
+    p.add_argument("--tag", default="sql",
+                   help="Prefix for output files (use 'spider' for the Spider run).")
     args = p.parse_args()
     if args.eval:
         evaluate(args)
