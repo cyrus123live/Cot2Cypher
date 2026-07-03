@@ -1,4 +1,32 @@
-# Advisor Feedback for Cot2Cypher
+# Alex Feedback for Cot2Cypher
+
+Written 2026-07-03, responding to `notes/MEETING_PREP.md` (2026-06-29).
+
+**On the ask.** One more semester is no problem. Good work running the
+controlled baseline that overturned the original result. Finding the confound yourself, and
+documenting it this cleanly, is worth more than the headline it cost us.
+
+**On the framing.** Do not treat A / B / C as three competing choices. A and B are one paper:
+B (the matched-baseline negative result plus the Test D mechanism) is a section inside A (the
+transfer study). Write that combined paper now as the floor. It is already earned and does not
+depend on any experiment we do not have.
+
+C is different in kind, so hold it as a stretch, not a fork. It is not just "more scope": its
+claim (CoT helps compositional SQL, hurts holistic graph queries) can be false. Our own pipeline
+currently shows CoT hurting SQL on the string metric. If the Spider plus execution-accuracy run
+comes back still showing CoT hurts SQL, C is dead and we ship A+B. If it shows CoT helps SQL,
+then C absorbs A and B as supporting evidence and becomes the lead. So let the SQL execution
+result decide C. Do not write toward C until it lands.
+
+**Compute.** Approved for the Spider plus execution SQL control, the packing ablation, and (only
+if the SQL result revives C) a trained verifier / best-of-N against the oracle ceiling. Run the
+Spider execution control first, it is the one that gates everything.
+
+**Housekeeping.** This FEEDBACK.md is stale below (frozen at 2026-05-20, still claiming the CoT
+win, the #4 leaderboard spot, and the 32.24% ZOGRASCOPE SOTA, all since overturned). Reconcile
+the Status section with the June findings so this file stops contradicting `EXPERIMENT_LOG.md`.
+
+---
 
 ## Status (2026-05-20)
 
