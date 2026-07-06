@@ -30,6 +30,23 @@ the Status section with the June findings so this file stops contradicting `EXPE
 
 ## Status (2026-05-20)
 
+> **⚠️ SUPERSEDED — reconciled 2026-07-03 per Alex's note above.** Everything below pre-dates the
+> controlled-baseline investigation and is **overturned**. Current source of truth:
+> `notes/EXPERIMENT_LOG.md` and `notes/MEETING_PREP.md`. Specifically:
+> - The **"+0.1227 GLEU from CoT" headline was the pipeline, not CoT.** Matched control (our
+>   direct-answer Gemma A5 vs our CoT A3): CoT is **−0.017 GLEU / −0.053 String EM** — CoT *hurts*.
+>   The +0.1227 was +0.1399 pipeline (Neo4j adapter → our direct-answer adapter) − 0.017 CoT.
+> - **"#4 GLEU leaderboard / best open-weight"** — invalid: it mixed our-pipeline numbers with
+>   others' published numbers, and CoT does not beat a matched baseline.
+> - **"ZOGRASCOPE length SOTA 32.24%"** — a train/test **leakage artifact** (58.6% instance-ID
+>   overlap). The clean per-split redo reverses it: direct-answer beats CoT on every split,
+>   including length (+0.21 exec).
+> - The mechanistic analyses (schema grounding, 1-hop paradox, latent/active, taxonomy) compared CoT
+>   against the **confounded** baseline (A2), so they describe A2-vs-A3 differences, not causal
+>   effects of CoT. Test D (holistic-path ablation) is the one causal mechanism that survives.
+>
+> Original pre-confound text kept below only as a record of the earlier framing.
+
 A clean, well-executed experiment: CoT distillation on Gemma-2-9B for Text2Cypher with a tightly controlled setup (same QLoRA config as Neo4j baseline, only training data differs).
 
 **Headline numbers on the Neo4j Text2Cypher 2024 benchmark:**
