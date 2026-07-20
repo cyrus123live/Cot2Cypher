@@ -1,0 +1,304 @@
+% A+B paper: the transfer study (spine) + matched-baseline negative result & Test D mechanism (core).
+% Scaffold generated 2026-07-20. Reuses references.bib. Related Work / Method prose can be ported
+% from paper.tex (archived old paper). Numbers are from notes/EXPERIMENT_LOG.md.
+% DO NOT write toward the compositional-prior claim (C) until the Spider+execution result lands.
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{natbib}
+\usepackage{geometry}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\geometry{margin=1in}
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+
+\title{What Transfers from Text-to-SQL to Text-to-Cypher?\\A Controlled Study of Reasoning, Selection, and Training Recipe}
+\author{Cyrus Parsons}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Text-to-SQL has produced a large toolbox of techniques---chain-of-thought (CoT) distillation,
+self-consistency, execution-based selection, reinforcement learning---but it is unclear which of
+them transfer to the structurally different task of Text-to-Cypher. We run a controlled,
+matched-pipeline study to find out, unified by a single \emph{constrained-output-space hypothesis}:
+a Cypher graph pattern is a single \emph{connected} object with few semantically-equivalent surface
+forms, whereas SQL is \emph{compositional} with many. This predicts that (P1)~string-diversity
+methods fail, (P2)~execution-grounded methods still transfer, and (P3)~CoT/decomposition hurts.
+Our central result is negative and, to our knowledge, the first controlled demonstration of it: CoT
+distillation---the highest-profile SQL transfer---does \emph{not} improve Text-to-Cypher and
+modestly hurts it. The effect holds across two model families (Gemma-2-9B, Llama-3.1-8B), naive and
+execution-verified traces, and in-distribution, compositional, and length-generalization regimes.
+Apparent gains reported under an earlier framing are attributable to a stronger supervised
+fine-tuning recipe and a leaked benchmark split, not to reasoning. We give a causal mechanism: CoT's
+decompositional bias fragments connected graph patterns, and a holistic-reasoning ablation recovers
+$\sim$40\% of the penalty by cutting fragmentation 5--6$\times$. Consistent with the hypothesis,
+execution-grounded selection transfers (+1.1pp exact match) while string self-consistency does not.
+We close with a methodological lesson: a published artifact used as a control, rather than a matched
+in-pipeline baseline, produced months of false ``CoT helps'' conclusions.
+\end{abstract}
+
+%------------------------------------------------------------------
+\section{Introduction}
+%------------------------------------------------------------------
+Text-to-SQL is a mature field with a well-stocked toolbox: CoT distillation \citep{he2025starsql,
+tai2023cot}, self-consistency, execution-based candidate selection, and reinforcement learning have
+each produced large gains. Text-to-Cypher---translating natural language to the graph query language
+of Neo4j \citep{ozsoy2025text2cypher}---is younger and structurally different, and it is tempting to
+assume the SQL toolbox carries over. This paper asks, in a controlled setting, \emph{which techniques
+actually transfer, and why}.
+
+Our organizing idea is the \textbf{constrained-output-space hypothesis} (\S\ref{sec:hyp}): a Cypher
+basic graph pattern is a single \emph{connected} object admitting few semantically-equivalent surface
+forms, unlike SQL, which composes from sub-queries and joins and admits many. This structural
+difference makes three predictions about transfer (P1--P3 above).
+
+Our headline finding tests the most important transfer---CoT distillation---and it is negative.
+Under a matched pipeline where the \emph{only} variable is the training target (a reasoning trace
+followed by the query, versus the query alone), CoT distillation modestly \emph{degrades}
+Text-to-Cypher across two model families and every regime we test. We trace an earlier positive
+framing of this same project to two confounds: an unmatched baseline (a published adapter used as a
+control) and a leaked cross-split evaluation. We then explain the negative result mechanistically and
+show which techniques \emph{do} transfer.
+
+\noindent\textbf{Contributions.}
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{A controlled matched-baseline result} that CoT distillation does not help, and
+  modestly hurts, Text-to-Cypher---across Gemma-2-9B and Llama-3.1-8B, naive and execution-verified
+  traces, and in-distribution / compositional / length-generalization regimes (\S\ref{sec:matched}).
+  \item \textbf{A causal mechanism}: decomposition fragments connected graph patterns; a
+  holistic-reasoning ablation recovers $\sim$40\% of the penalty (\S\ref{sec:mech}).
+  \item \textbf{A positive transfer}: execution-grounded (MBR) selection beats string voting while
+  string self-consistency fails, confirming the hypothesis (\S\ref{sec:positive}).
+  \item \textbf{A methodological lesson}: always train a matched in-pipeline baseline before
+  attributing a delta to an intervention (\S\ref{sec:discussion}).
+\end{enumerate}
+
+%------------------------------------------------------------------
+\section{Related Work}
+%------------------------------------------------------------------
+\todo{Port from paper.tex \S Related Work (Text2Cypher; CoT-for-SQL incl.\ STaR-SQL \citep{he2025starsql}
+and \citet{tai2023cot}; RL \citep{tran2025refining}; selection; benchmarks). Reframe: these are the
+SQL toolbox whose transfer we test. Emphasize that CoT-helps-SQL is an \emph{assumed-positive} we
+overturn in a controlled setting for Cypher.}
+
+%------------------------------------------------------------------
+\section{The Constrained-Output-Space Hypothesis}
+\label{sec:hyp}
+%------------------------------------------------------------------
+\todo{Formalize. A Cypher pattern \texttt{(a)-[:R]->(b)-[:S]->(c)} is one connected object: its
+sub-parts cannot be assembled independently without a global consistency constraint (shared
+variables). SQL composes from sub-queries/CTEs/joins that \emph{can} be assembled independently, and
+admits many equivalent surface forms (JOIN vs subquery, alias renaming, clause order). Derive
+predictions:}
+\begin{itemize}[leftmargin=*]
+  \item \textbf{P1 (string diversity fails).} With ~one canonical form, sampling produces little
+  useful diversity, so string-vote self-consistency cannot help.
+  \item \textbf{P2 (execution grounding transfers).} Methods that operate on \emph{results} bypass
+  the surface-form bottleneck and still help.
+  \item \textbf{P3 (decomposition hurts).} Decomposing a connected pattern fragments it; the right
+  inductive bias for SQL is the wrong one for Cypher.
+\end{itemize}
+
+%------------------------------------------------------------------
+\section{Matched Experimental Protocol}
+\label{sec:protocol}
+%------------------------------------------------------------------
+Every comparison in this paper fixes the base model, the QLoRA configuration (4-bit NF4, $r{=}64$,
+$\alpha{=}64$, all-linear targets, \texttt{paged\_adamw\_8bit}), the completion-only loss masking,
+and the CoT-distillation procedure (traces from GPT-oss-120B), and varies \emph{only} the training
+target: the reference query alone (\emph{direct}) versus a reasoning trace followed by the reference
+query (\emph{CoT}). Both arms train on the identical set of instances (those with a valid trace), so
+no data differs between them. We instantiate this protocol on Cypher (Neo4j 2024; ZOGRASCOPE),
+SPARQL (LC-QuAD 2.0), and SQL (\S\ref{sec:crossform}).
+\todo{Port dataset/QLoRA/inference details from paper.tex \S Method + \S Experimental Setup.}
+
+%------------------------------------------------------------------
+\section{Results}
+%------------------------------------------------------------------
+
+\subsection{The matched negative result on Text-to-Cypher}
+\label{sec:matched}
+Table~\ref{tab:matched} reports the matched comparison on the Neo4j 2024 benchmark. For \emph{both}
+model families, CoT \emph{lowers} every translation and execution metric.
+
+\begin{table}[t]\centering
+\caption{Matched direct-vs-CoT on Neo4j 2024 (our pipeline; only the training target differs).
+CoT hurts both families.}
+\label{tab:matched}
+\begin{tabular}{llccc}
+\toprule
+Model & Target & GLEU & String EM & Exec EM \\
+\midrule
+Gemma-2-9B & direct & \textbf{0.7854} & \textbf{0.4331} & --$^{\dagger}$ \\
+Gemma-2-9B & CoT    & 0.7682 & 0.3799 & 0.2554 \\
+\addlinespace
+Llama-3.1-8B & direct & \textbf{0.7680} & \textbf{0.4223} & \textbf{0.2865} \\
+Llama-3.1-8B & CoT    & 0.7416 & 0.3000 & 0.2161 \\
+\midrule
+\multicolumn{2}{l}{CoT effect (Gemma)} & $-0.0172$ & $-0.0532$ & -- \\
+\multicolumn{2}{l}{CoT effect (Llama)} & $-0.0264$ & $-0.1223$ & $-0.0704$ \\
+\bottomrule
+\end{tabular}
+\\[2pt]{\footnotesize $^{\dagger}$Gemma direct-answer execution EM pending (predictions generated).}
+\end{table}
+
+The positive result reported under an earlier framing of this project decomposes cleanly
+(Table~\ref{tab:decomp}): the apparent ``+0.1227 GLEU from CoT'' was a comparison against a
+\emph{published} adapter run through our inference harness, not a matched control. Replacing that
+baseline with our own direct-answer model shows the gain was the training pipeline ($+0.1399$); CoT
+itself \emph{subtracts} ($-0.0172$).
+
+\begin{table}[t]\centering
+\caption{Decomposition of the previously reported ``+0.1227 GLEU from CoT'' on Neo4j 2024.}
+\label{tab:decomp}
+\begin{tabular}{lc}
+\toprule
+Component & $\Delta$ GLEU \\
+\midrule
+Pipeline (Neo4j published adapter $\to$ our direct-answer adapter, same inference) & $+0.1399$ \\
+CoT (our direct-answer $\to$ our CoT) & $-0.0172$ \\
+\midrule
+Net (previously reported as ``CoT'') & $+0.1227$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Robustness: leakage, verified traces, and generalization splits}
+\label{sec:robust}
+\textbf{Not a leakage artifact.} Neo4j 2024 contains 31.7\% of test questions verbatim in training,
+but the leakage is adversarial (often a \emph{different} gold query); on genuinely unseen questions
+the direct-answer model beats CoT by $+0.068$ EM, so CoT loses \emph{most} where leakage is absent.
+\textbf{Verified traces don't rescue it.} Retraining both arms on execution-verified forward traces
+(the STaR-SQL ingredient) still yields CoT below direct (exec EM $0.0939$ vs $0.1052$).
+\textbf{Generalization.} On clean, per-split ZOGRASCOPE (leakage-verified), direct-answer wins every
+split including length (Table~\ref{tab:zog})---overturning an earlier ``length-generalization SOTA''
+claim that was a cross-split leakage artifact.
+
+\begin{table}[t]\centering
+\caption{Clean ZOGRASCOPE execution accuracy (per-split, leakage-verified). Direct wins every split.}
+\label{tab:zog}
+\begin{tabular}{lccc}
+\toprule
+Split & Direct & CoT & $\Delta$ (direct $-$ CoT) \\
+\midrule
+IID            & 0.8255 & 0.6094 & $+0.216$ \\
+Compositional  & 0.6612 & 0.4181 & $+0.243$ \\
+Length (dist.\ shift) & 0.4397 & 0.2306 & $+0.209$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Cross-formalism}
+\label{sec:crossform}
+Table~\ref{tab:crossform} extends the matched comparison to SPARQL and SQL. CoT hurts SPARQL (GLEU)
+as it does Cypher. On synthetic SQL, CoT also hurts under string and SQL-canonicalized exact match;
+however, string metrics undercount SQL correctness (many equivalent forms), so the decisive test is
+\emph{execution accuracy on Spider}, which is pending.
+\todo{Fill the Spider execution row when the run lands. Per Alex, do not draw the compositional-prior
+conclusion (C) from this table until that number exists.}
+
+\begin{table}[t]\centering
+\caption{Matched CoT effect across formalisms (our pipeline). Negative everywhere measured; the
+decisive SQL execution-accuracy control is pending.}
+\label{tab:crossform}
+\begin{tabular}{lll}
+\toprule
+Formalism (dataset) & Metric & CoT effect \\
+\midrule
+Cypher (Neo4j 2024) & GLEU & $-0.0172$ \\
+SPARQL (LC-QuAD 2.0) & GLEU & $-0.1470$ \\
+SQL (synthetic) & canon.\ EM & $-0.0477$ \\
+SQL (Spider) & execution acc. & \emph{pending} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{What does transfer: execution-grounded selection and a stronger recipe}
+\label{sec:positive}
+Consistent with P1--P2, string-vote self-consistency falls \emph{below} greedy, while
+execution-result (MBR) selection rises above both (Table~\ref{tab:select}); the large oracle ceiling
+motivates a trained verifier as future work. Separately, completion-only loss masking yields a
+direct-answer model well above the published baseline (GLEU 0.7854 vs 0.5560), of which the masking
+choice accounts for $+0.044$ (a full-sequence ablation).
+
+\begin{table}[t]\centering
+\caption{Self-consistency selection on the CoT model (Neo4j exec subset). Execution-result voting
+transfers; string voting does not.}
+\label{tab:select}
+\begin{tabular}{lc}
+\toprule
+Selection method & Exec EM \\
+\midrule
+String-vote SC@5 & 0.2509 \\
+Greedy (single) & 0.2554 \\
+Execution-vote SC@5 (MBR) & \textbf{0.2665} \\
+Oracle (any of 5 correct) & 0.4302 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%------------------------------------------------------------------
+\section{Mechanism: why CoT hurts Cypher}
+\label{sec:mech}
+%------------------------------------------------------------------
+On clean ZOGRASCOPE with execution ground truth, CoT's failures are compositional, not relational:
+97\% of failures use the correct relationships, but assemble them into the wrong connected structure.
+A reasoning-format ablation ladder (Table~\ref{tab:ladder}) isolates the cause. A \emph{holistic-path}
+format that states the full connected path without sub-question decomposition recovers $\sim$40\% of
+the penalty and cuts path fragmentation 5--6$\times$; adding explicit hop-enumeration (E4) does not
+help further. The residual gap to direct-answer reflects a planning-stage truncation on long paths
+(the reasoning itself commits to a too-short path 99--100\% of the time) plus an intrinsic cost of
+generating reasoning before a jointly-constrained object.
+
+\begin{table}[t]\centering
+\caption{Reasoning-format ablation (ZOGRASCOPE, execution accuracy, common instances). Holistic
+framing recovers part of the CoT penalty; no format closes the gap to direct.}
+\label{tab:ladder}
+\begin{tabular}{lccc}
+\toprule
+Config & Length & IID & Comp. \\
+\midrule
+Direct-answer & \textbf{0.475} & \textbf{0.826} & \textbf{0.661} \\
+QDecomp-CoT   & 0.258 & 0.609 & 0.418 \\
+Holistic-CoT  & 0.303 & 0.710 & 0.511 \\
+Enum-CoT (E4) & 0.231 & 0.669 & 0.429 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%------------------------------------------------------------------
+\section{Discussion}
+\label{sec:discussion}
+%------------------------------------------------------------------
+\todo{(1) The constrained-output-space account ties P1--P3 together: the same property that makes
+string diversity useless (P1) and CoT harmful (P3) is what makes execution grounding the only
+transfer that survives (P2). (2) Methodological lesson: a published artifact is not a control; the
+matched baseline reversed the sign of our headline. (3) Scope: why SQL's CoT gains need not transfer;
+flag the Spider+execution control as the test that would license a compositional-prior claim
+(future work, not a claim here).}
+
+%------------------------------------------------------------------
+\section{Limitations}
+%------------------------------------------------------------------
+\todo{String metrics undercount SQL (motivates the pending Spider execution control); single teacher
+(GPT-oss-120B); 2024-dataset leakage (which we turn into evidence, \S\ref{sec:robust}); approximate
+result-set comparison for execution accuracy.}
+
+%------------------------------------------------------------------
+\section{Conclusion}
+%------------------------------------------------------------------
+\todo{One paragraph: which SQL techniques transfer to Cypher (execution-grounded selection; a strong
+SFT recipe) and which do not (CoT distillation; string diversity), unified by the
+constrained-output-space hypothesis and explained mechanistically.}
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+\end{document}
