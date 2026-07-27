@@ -199,6 +199,34 @@ Scripts: `drac_train_gemma_fullseq.sh` / `drac_gemma_fullseq_eval.sh`. If GLEU d
 masking is confirmed as THE driver. **Reframes the headline:** the gain mis-attributed to CoT was a
 stronger direct-answer SFT recipe (completion-only masking on long-schema inputs).
 
+## L. SQL-aware re-score of the SQL control — deficit is NOT a metric artifact (2026-07-27)
+
+Tests the metric-artifact escape hatch for the SQL CoT "negative" (gretelai synthetic_text_to_sql,
+`predictions_sql_{direct,cot}.jsonl`): SQL has many equivalent surface forms, so string EM could
+have been undercounting the CoT arm. Re-scored both arms with `scripts/score_sql_semantic.py`
+(raw EM → normalized EM → sqlglot canonical-AST EM, sqlite dialect, 100% ref parse rate).
+
+| Metric | Direct | CoT | CoT effect |
+|--------|:------:|:---:|:----------:|
+| raw string EM | 0.3193 | 0.2719 | −0.0473 |
+| normalized EM | 0.3299 | 0.2813 | −0.0485 |
+| **canonical-AST EM (SQL-aware)** | **0.3312** | **0.2835** | **−0.0477** |
+
+**The deficit does not close as the metric becomes semantic** — all three deltas within 0.001 of
+each other. Surface form was NOT inflating the gap. Per-complexity canon_em: CoT worse or tied in
+every stratum (aggregation −0.060, basic −0.060, set ops −0.059, subqueries −0.041; CTEs 0→0 n=20,
+multiple_joins tied 0.022 n=139). The compositional strata where the C-framing predicts CoT gains
+show no gain — though their match rates are near-zero under any string-level metric, so sensitivity
+there is limited.
+
+**Caveats:** canon_em is a lower bound on semantic equivalence (no credit for alias renames or
+JOIN↔subquery rewrites); execution accuracy remains the last word. **Implication for framing C:**
+the metric-artifact hypothesis is now unsupported; Spider+execution (staged, pending DRAC run)
+remains the formal gate, but the prior has shifted toward shipping A+B. If Spider execution also
+shows CoT hurting, that completes a consistent triple (string / canonical-AST / execution).
+
+Output: `results/sql_semantic_rescore.txt`.
+
 ## Bottom line
 
 **CoT distillation does not help Text2Cypher in ANY clean comparison — six now, all negative:**
@@ -216,6 +244,7 @@ stronger direct-answer SFT recipe (completion-only masking on long-schema inputs
 - The original "+0.1227 GLEU from CoT" was the pipeline, not CoT (matched control A5).
 - **Execution-based selection (B2) beats string voting (B1)** — the one small positive transfer-study finding.
 - The "ZOGRASCOPE SOTA on length" was a leakage artifact; the clean redo reverses it.
+- The SQL-control CoT deficit (−0.047) survives SQL-aware canonical-AST re-scoring (§L) — not a metric artifact; Spider+execution is the remaining gate for framing C.
 
 **Remaining (optional / calibration):** Gemma direct-answer exec EM (A5); Neo4j harness calibration (reproduce published 0.5560). Neither can change the conclusion.
 

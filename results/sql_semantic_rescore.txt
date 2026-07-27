@@ -1,0 +1,34 @@
+Argument 'format' is not supported for expression 'ToChar' when targeting Dialect.
+Argument 'format' is not supported for expression 'ToChar' when targeting Dialect.
+Argument 'format' is not supported for expression 'ToChar' when targeting Dialect.
+Argument 'format' is not supported for expression 'ToChar' when targeting Dialect.
+Argument 'format' is not supported for expression 'ToChar' when targeting Dialect.
+Argument 'format' is not supported for expression 'ToChar' when targeting Dialect.
+Argument 'format' is not supported for expression 'ToChar' when targeting Dialect.
+Argument 'format' is not supported for expression 'ToChar' when targeting Dialect.
+Argument 'format' is not supported for expression 'ToChar' when targeting Dialect.
+Argument 'format' is not supported for expression 'ToChar' when targeting Dialect.
+Argument 'format' is not supported for expression 'ToChar' when targeting Dialect.
+Argument 'format' is not supported for expression 'ToChar' when targeting Dialect.
+Argument 'format' is not supported for expression 'ToChar' when targeting Dialect.
+Argument 'format' is not supported for expression 'ToChar' when targeting Dialect.
+'RENAME TABLE audience_demographics TO audience' contains unsupported syntax. Falling back to parsing as a 'Command'.
+file                                            raw_em  norm_em  canon_em  ref_parse
+------------------------------------------------------------------------------------
+predictions_sql_direct.jsonl                    0.3193   0.3299    0.3312      1.000
+predictions_sql_cot.jsonl                       0.2719   0.2813    0.2835      1.000
+
+CoT effect (file2 - file1) at each metric — does the deficit close as the metric gets semantic?
+  raw_em  : -0.0473
+  norm_em : -0.0485
+  canon_em: -0.0477  <- the SQL-aware one
+
+  per-complexity canon_em (direct -> cot):
+    CTEs                       0.000 -> 0.000  (delta +0.000, n=20)
+    aggregation                0.221 -> 0.161  (delta -0.060, n=1304)
+    basic SQL                  0.551 -> 0.491  (delta -0.060, n=2869)
+    multiple_joins             0.022 -> 0.022  (delta +0.000, n=139)
+    set operations             0.059 -> 0.000  (delta -0.059, n=51)
+    single join                0.037 -> 0.028  (delta -0.009, n=886)
+    subqueries                 0.073 -> 0.031  (delta -0.041, n=386)
+    window functions           0.010 -> 0.005  (delta -0.005, n=196)
