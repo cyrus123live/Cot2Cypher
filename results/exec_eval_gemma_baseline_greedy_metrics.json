@@ -1,0 +1,90 @@
+{
+  "total_with_db": 2471,
+  "evaluated": 2471,
+  "exec_exact_match": 0.29745042492917845,
+  "exec_match_count": 735,
+  "pred_errors": 100,
+  "ref_errors": 51,
+  "per_database": {
+    "companies": {
+      "total": 275,
+      "matches": 64,
+      "exec_em": 0.23272727272727273
+    },
+    "neoflix": {
+      "total": 261,
+      "matches": 77,
+      "exec_em": 0.2950191570881226
+    },
+    "recommendations": {
+      "total": 253,
+      "matches": 58,
+      "exec_em": 0.22924901185770752
+    },
+    "movies": {
+      "total": 203,
+      "matches": 69,
+      "exec_em": 0.3399014778325123
+    },
+    "northwind": {
+      "total": 197,
+      "matches": 59,
+      "exec_em": 0.29949238578680204
+    },
+    "twitch": {
+      "total": 185,
+      "matches": 45,
+      "exec_em": 0.24324324324324326
+    },
+    "grandstack": {
+      "total": 182,
+      "matches": 74,
+      "exec_em": 0.4065934065934066
+    },
+    "gameofthrones": {
+      "total": 148,
+      "matches": 59,
+      "exec_em": 0.39864864864864863
+    },
+    "twitter": {
+      "total": 146,
+      "matches": 28,
+      "exec_em": 0.1917808219178082
+    },
+    "fincen": {
+      "total": 146,
+      "matches": 49,
+      "exec_em": 0.3356164383561644
+    },
+    "buzzoverflow": {
+      "total": 120,
+      "matches": 36,
+      "exec_em": 0.3
+    },
+    "offshoreleaks": {
+      "total": 115,
+      "matches": 34,
+      "exec_em": 0.2956521739130435
+    },
+    "network": {
+      "total": 109,
+      "matches": 35,
+      "exec_em": 0.3211009174311927
+    },
+    "stackoverflow2": {
+      "total": 91,
+      "matches": 37,
+      "exec_em": 0.4065934065934066
+    },
+    "bluesky": {
+      "total": 39,
+      "matches": 11,
+      "exec_em": 0.28205128205128205
+    },
+    "openstreetmap": {
+      "total": 1,
+      "matches": 0,
+      "exec_em": 0.0
+    }
+  }
+}

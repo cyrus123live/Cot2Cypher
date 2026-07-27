@@ -33,14 +33,14 @@ Benchmarks: **Neo4j Text2Cypher 2024** test set (n=4,833; execution subset n=2,4
 | A2 | Neo4j Gemma adapter via OUR inference (greedy, full schema) | mixed | 0.6455 | 0.1924 | 0.1862 (460/2471) | ⚠️ used as "baseline" for whole project |
 | A3 | **Gemma + CoT** | ours | 0.7682 | 0.3799 | 0.2554 (631/2471) | ⚠️ vs A2 confounded |
 | A4 | Gemma + CoT, **latent** (CoT adapter + baseline prompt) | ours | 0.7082 | 0.2197 | 0.2153 (532/2471) | ✅ vs A3 (ablation) |
-| A5 | **Gemma direct-answer baseline (the missing control)** | ours | **0.7854** | **0.4331** | *pending* | ✅ matched to A3 |
+| A5 | **Gemma direct-answer baseline (the missing control)** | ours | **0.7854** | **0.4331** | **0.2975 (735/2471)** | ✅ matched to A3 |
 | A6 | **Llama-3.1-8B direct-answer baseline** (matched prompt) | ours | 0.7680 | 0.4223 | 0.2865 (708/2471) | ✅ matched to A8 |
 | A7 | Llama-3.1-8B direct-answer baseline (mismatched CoT prompt) | ours | 0.7024 | 0.3888 | — | ⚠️ prompt mismatch |
 | A8 | **Llama-3.1-8B + CoT** | ours | 0.7416 | 0.3000 | 0.2161 (534/2471) | ✅ matched to A6 |
 | A9 | Llama published baseline (their numbers) | Neo4j | 0.6470 | — | 0.2299 | reference |
 
 **The headline decompositions (matched-pipeline = only training target differs):**
-- **Gemma CoT effect (A5→A3):** GLEU **−0.0172**, String EM **−0.0532** — CoT *hurts*.
+- **Gemma CoT effect (A5→A3):** GLEU **−0.0172**, String EM **−0.0532**, Exec EM **−0.0421** — CoT *hurts* on all three metrics. A5 also has *fewer* prediction errors than CoT (100 vs 114), killing the "CoT produces more valid Cypher" claim (that was A2's 242 vs A3, i.e. the pipeline again). *(A5 exec eval run 2026-07-27 against live demo DBs: 51 reference errors vs 166 in the earlier A2/A3 runs — DB state has drifted, so cross-run exec comparisons carry a small same-denominator caveat; the A5-vs-A3 direction is far outside it.)*
 - **Llama CoT effect (A6→A8):** GLEU **−0.0264**, String EM **−0.1223**, Exec EM **−0.0704** — CoT *hurts*.
 - The reported "+0.1227 GLEU from CoT" (A2→A3) was **+0.1399 pipeline** (A2→A5) **−0.0172 CoT** (A5→A3). The gain was the pipeline; CoT subtracted.
 
@@ -229,11 +229,12 @@ Output: `results/sql_semantic_rescore.txt`.
 
 ## Bottom line
 
-**CoT distillation does not help Text2Cypher in ANY clean comparison — six now, all negative:**
+**CoT distillation does not help Text2Cypher in ANY clean comparison — seven now, all negative:**
 
 | # | Comparison | Metric | Direct | CoT | Winner |
 |---|-----------|:------:|:------:|:---:|:------:|
 | 1 | Neo4j Gemma (naive CoT) | GLEU | 0.7854 | 0.7682 | direct |
+| 1b | Neo4j Gemma (naive CoT) | Exec | 0.2975 | 0.2554 | direct |
 | 2 | Neo4j Llama (naive CoT) | GLEU | 0.7680 | 0.7416 | direct |
 | 3 | Neo4j STaR (verified CoT) | Exec | 0.1052 | 0.0939 | direct |
 | 4 | ZOGRASCOPE IID | Exec | 0.8255 | 0.6094 | direct |
@@ -246,6 +247,6 @@ Output: `results/sql_semantic_rescore.txt`.
 - The "ZOGRASCOPE SOTA on length" was a leakage artifact; the clean redo reverses it.
 - The SQL-control CoT deficit (−0.047) survives SQL-aware canonical-AST re-scoring (§L) — not a metric artifact; Spider+execution is the remaining gate for framing C.
 
-**Remaining (optional / calibration):** Gemma direct-answer exec EM (A5); Neo4j harness calibration (reproduce published 0.5560). Neither can change the conclusion.
+**Remaining (optional / calibration):** Neo4j harness calibration (reproduce published 0.5560); packing ablation for the unexplained recipe-gap remainder. Neither can change the conclusion. *(A5 exec EM landed 2026-07-27: 0.2975 — CoT effect −0.0421, the seventh clean negative comparison.)*
 
 **The honest paper:** *"Chain-of-thought distillation does not improve Text2Cypher — in-distribution or under distribution shift, with naive or execution-verified traces, across two model families. Apparent gains in prior framing were a stronger SFT recipe and a leaked benchmark split. Among Text-to-SQL techniques, only execution-based selection transfers; diversity- and reasoning-based methods do not, consistent with Cypher's constrained output space."*

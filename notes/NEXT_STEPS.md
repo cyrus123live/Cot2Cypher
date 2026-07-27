@@ -58,12 +58,13 @@ on the full sequence).
 string EM showing CoT hurts (A5 0.4331 vs A3 0.3799); exec EM should confirm it on the execution
 metric too. Predictions already exist — this is one eval run, no inference needed.
 
-- [ ] **2a. Run execution eval** on the existing predictions:
-      `eval_execution.py` over `results/predictions_gemma_baseline_greedy.jsonl`
-      (demo.neo4jlabs.com, same 2,471 DB-eligible / 2,305-valid-ref methodology as A3).
-- [ ] **2b. Record** exec EM + pred-error count; compare to A3 CoT (0.2554, 114 errors).
-- [ ] **2c. Update `EXPERIMENT_LOG.md`** — fill the A5 exec-EM cell and the matched-pipeline
-      decomposition (the A5→A3 CoT effect on exec EM, completing the GLEU/StrEM/ExecEM triple).
+- [x] **2a. Run execution eval — DONE (2026-07-27).** `eval_execution.py` over
+      `results/predictions_gemma_baseline_greedy.jsonl` (demo.neo4jlabs.com, 2,471 DB-eligible).
+- [x] **2b. Result: A5 exec EM 0.2975 (735/2471), 100 pred errors** — vs A3 CoT 0.2554 / 114
+      errors. CoT effect −0.0421; direct also makes *fewer* invalid queries. Caveat: this run saw
+      51 reference errors vs 166 in the earlier A2/A3 runs (live-DB drift since June).
+- [x] **2c. `EXPERIMENT_LOG.md` updated** — A5 cell filled, decomposition completed
+      (GLEU/StrEM/ExecEM triple, all negative), bottom-line table now 7/7 clean negatives.
 
 ---
 
