@@ -20,6 +20,7 @@ Writes results/bootstrap_cis.json and prints a table.
 """
 
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -75,7 +76,8 @@ def load_jsonl(path):
     return [json.loads(l) for l in open(path)]
 
 
-def paired_translation(direct_path, cot_path):
+def paired_translation(direct_path, cot_path, pred_key="predicted_cypher",
+                       ref_key="reference_cypher"):
     """Return arrays (m_d, a_d, m_c, a_c, em_d, em_c) joined on instance_id."""
     d = {r["instance_id"]: r for r in load_jsonl(direct_path)}
     c = {r["instance_id"]: r for r in load_jsonl(cot_path)}
@@ -83,8 +85,8 @@ def paired_translation(direct_path, cot_path):
     assert len(ids) == len(d) == len(c), f"join mismatch: {len(d)} vs {len(c)} vs {len(ids)}"
     md, ad, mc, ac, ed, ec = [], [], [], [], [], []
     for i in ids:
-        pd_, rd = d[i]["predicted_cypher"], d[i]["reference_cypher"]
-        pc, rc = c[i]["predicted_cypher"], c[i]["reference_cypher"]
+        pd_, rd = d[i][pred_key], d[i][ref_key]
+        pc, rc = c[i][pred_key], c[i][ref_key]
         m, a = gleu_stats(pd_, rd)
         md.append(m); ad.append(a)
         m, a = gleu_stats(pc, rc)
@@ -165,11 +167,10 @@ def main():
     print("Building paired data (GLEU stats take a minute)...", file=sys.stderr)
 
     # --- Neo4j translation metrics, Gemma and Llama
-    # NOTE: the matched-prompt Llama baseline predictions (A6: GLEU 0.7680) live on
-    # DRAC at ~/scratch/results_llama_baseline_matched/ and have not been scp'd back;
-    # the local predictions_llama_baseline_greedy.jsonl is the MISMATCHED-prompt A7
-    # run (GLEU 0.7024). Fetch the matched file to the path below to enable that CI.
-    import os
+    # NOTE: predictions_llama_baseline_greedy.jsonl is the MISMATCHED-prompt A7 run
+    # (GLEU 0.7024). The matched A6 file (GLEU 0.7680) was retrieved from DRAC
+    # ~/scratch/results_llama_baseline_matched/predictions_cot_greedy.jsonl and
+    # renamed to the path below.
     comparisons = [
         ("gemma", "results/predictions_gemma_baseline_greedy.jsonl",
          "results/predictions_cot_4bit_greedy.jsonl", 0.7854, 0.7682),
@@ -222,6 +223,20 @@ def main():
                              "results/predictions_sql_cot.jsonl")
     p, lo, hi = boot_binary(xd, xc, rng)
     out["sql_canon_em"] = {"delta": p, "lo": lo, "hi": hi, "n": len(xd)}
+
+    # --- SPARQL GLEU (LC-QuAD 2.0; same HF google_bleu as the Cypher arms)
+    sparql_d = "results/results_sparql/predictions_sparql_direct.jsonl"
+    sparql_c = "results/results_sparql/predictions_sparql_cot.jsonl"
+    if os.path.exists(sparql_d) and os.path.exists(sparql_c):
+        md, ad, mc, ac, _, _ = paired_translation(
+            sparql_d, sparql_c, pred_key="predicted_sparql", ref_key="reference_sparql")
+        g_d, g_c = md.sum() / ad.sum(), mc.sum() / ac.sum()
+        assert abs(g_d - 0.5741) < 1e-3, f"sparql direct GLEU {g_d:.4f} != reported 0.5741"
+        assert abs(g_c - 0.4271) < 1e-3, f"sparql cot GLEU {g_c:.4f} != reported 0.4271"
+        p, lo, hi = boot_gleu(md, ad, mc, ac, rng)
+        out["sparql_gleu"] = {"delta": p, "lo": lo, "hi": hi, "n": len(md)}
+    else:
+        print("SKIP sparql GLEU CI: results/results_sparql/ not found", file=sys.stderr)
 
     with open("results/bootstrap_cis.json", "w") as f:
         json.dump({k: {kk: (float(vv) if not isinstance(vv, int) else vv)

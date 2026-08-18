@@ -258,12 +258,9 @@ Llama-3.1-8B & CoT    & 0.7416 & 0.3000 & 0.2161 \\
 \multicolumn{2}{l}{CoT effect (Gemma)} & $-0.0172$ & $-0.0532$ & $-0.0421$ \\
 & & {\scriptsize$[-0.025, -0.010]$} & {\scriptsize$[-0.063, -0.044]$} & {\scriptsize$[-0.060, -0.025]$} \\
 \multicolumn{2}{l}{CoT effect (Llama)} & $-0.0264$ & $-0.1223$ & $-0.0704$ \\
-& & & & {\scriptsize$[-0.087, -0.054]$} \\
+& & {\scriptsize$[-0.039, -0.011]$} & {\scriptsize$[-0.134, -0.111]$} & {\scriptsize$[-0.087, -0.053]$} \\
 \bottomrule
 \end{tabular}
-\\[2pt]{\footnotesize CIs for the Llama translation deltas are omitted (matched-prompt prediction
-files pending retrieval from the cluster); the point estimates are 1.5--2.3$\times$ the Gemma effects,
-whose CIs exclude zero.}
 \end{table}
 
 The positive result reported under an earlier framing of this project decomposes cleanly
@@ -319,9 +316,11 @@ Length (dist.\ shift) & 1253 & 0.4397 & 0.2306 & $+0.209$ \; $[+0.177, +0.241]$ 
 
 \subsection{Cross-formalism}
 \label{sec:crossform}
-Table~\ref{tab:crossform} extends the matched comparison to SPARQL and SQL. CoT hurts SPARQL (LC-QuAD
-2.0 over Wikidata; both arms face the same entity-linking difficulty, so the delta is internally
-valid) as it does Cypher. On synthetic SQL, CoT hurts under string exact match---but our own
+Table~\ref{tab:crossform} extends the matched comparison to SPARQL and SQL. CoT hurts SPARQL
+(LC-QuAD 2.0 over Wikidata, $n{=}4{,}592$; GLEU $-0.147$, 95\% CI $[-0.158, -0.137]$) as it does
+Cypher---and by a wider margin. Absolute SPARQL accuracy is low for both arms because Wikidata
+identifiers (\texttt{wd:Q\ldots}, \texttt{wdt:P\ldots}) are opaque, but both arms face the same
+entity-linking difficulty, so the delta is internally valid. On synthetic SQL, CoT hurts under string exact match---but our own
 hypothesis (P1 inverted) warns that string metrics undercount SQL correctness, since SQL admits many
 equivalent surface forms. We therefore re-scored the SQL predictions at three levels of increasing
 semantic awareness: raw string EM ($-0.0473$), normalized EM ($-0.0485$), and sqlglot canonical-AST EM
@@ -337,17 +336,17 @@ we deliberately draw no conclusion here about whether CoT helps SQL in this pipe
 compositional-prior conclusion from this table until that number exists.}
 
 \begin{table}[t]\centering
-\caption{Matched CoT effect across formalisms (our pipeline). Negative everywhere measured; the
-decisive SQL execution-accuracy control is pending.}
+\caption{Matched CoT effect across formalisms (our pipeline), with paired bootstrap 95\% CIs.
+Negative everywhere measured; the decisive SQL execution-accuracy control is pending.}
 \label{tab:crossform}
-\begin{tabular}{lll}
+\begin{tabular}{llcc}
 \toprule
-Formalism (dataset) & Metric & CoT effect \\
+Formalism (dataset) & Metric & CoT effect & 95\% CI \\
 \midrule
-Cypher (Neo4j 2024) & GLEU & $-0.0172$ \\
-SPARQL (LC-QuAD 2.0) & GLEU & $-0.1470$ \\
-SQL (synthetic) & canon.\ EM & $-0.0477$ \\
-SQL (Spider) & execution acc. & \emph{pending} \\
+Cypher (Neo4j 2024) & GLEU & $-0.0172$ & $[-0.025, -0.010]$ \\
+SPARQL (LC-QuAD 2.0) & GLEU & $-0.1470$ & $[-0.158, -0.137]$ \\
+SQL (synthetic) & canon.\ EM & $-0.0477$ & $[-0.056, -0.039]$ \\
+SQL (Spider) & execution acc. & \emph{pending} & \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -515,11 +514,10 @@ carry different gold queries---which we exploit as evidence in \S\ref{sec:robust
 on this benchmark should be read with that in mind. \textbf{Live-database drift.} Neo4j execution
 evaluation runs against public demo databases whose state changes over time (reference-failure counts
 varied from 166 to 51 between our evaluation dates); within-run comparisons are unaffected, but
-cross-run execution numbers carry a small same-denominator caveat. \textbf{Uncertainty.} The central deltas carry paired bootstrap 95\% CIs, all excluding zero
-(Tables~\ref{tab:matched} and~\ref{tab:zog}; SQL in \S\ref{sec:crossform}); the Llama translation
-CIs and the SPARQL CI are pending retrieval of prediction files from the training cluster. Each arm
-is a single training run, so seed-to-seed training variance is not measured; the effect's
-directional consistency across seven independent comparisons, two model families, and three
+cross-run execution numbers carry a small same-denominator caveat. \textbf{Uncertainty.} Every reported CoT delta carries a paired bootstrap 95\% CI, and all eleven
+exclude zero (Tables~\ref{tab:matched}, \ref{tab:zog}, and~\ref{tab:crossform}). Each arm is,
+however, a single training run, so seed-to-seed training variance is not measured; the effect's
+directional consistency across eleven independent comparisons, two model families, and three
 formalisms is the practical guard against a single-seed artifact. \textbf{Task character.} ZOGRASCOPE supplies entity values in the question,
 making it a copy-and-place task; benchmarks requiring value inference may dilute (or reverse) the
 error-accumulation component of the mechanism, though the fragmentation component is task-independent.
