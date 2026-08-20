@@ -28,11 +28,12 @@ on the full sequence).
       the prompt (`DataCollatorForCompletionOnlyLM`), so the configs differ in the one place that
       matters most. With a ~30:1 schema:answer token ratio, full-sequence loss spends ~97% of the
       gradient reconstructing schemas — a plausible mechanism for the +0.14 GLEU training gap.
-- [ ] **1b. Reproduce the published 0.5560.** Run Neo4j's adapter through `run_neo4j.py` with
-      inference **truncated at `max_seq_len=1600`** + exact model-card prompt (no system prompt).
-      A2 (0.6455) used full schema / `max_length=7680`; the addendum already shows >1600-token
-      prompts score lower, so truncation should pull our number toward 0.5560. If it lands near
-      0.5560 → harness is on the leaderboard scale (good). If not → investigate framework/version.
+- [~] **1b. Reproduce the published 0.5560. — SCRIPT BUILT (2026-08-20), pending cluster run.**
+      Implemented as `scripts/drac_neo4j_repro_eval.sh`: the published adapter through
+      `drac_inference.py` with `--no-cot-prompt --max-length 1600` (right-truncation, greedy,
+      4-bit — identical to A2 except the truncation). Prereq: pre-download the adapter on the
+      login node (see script header). If it lands near 0.5560 → harness calibrated to the
+      leaderboard scale; if not → residual is framework/version, stays documented.
 - [~] **1c. Ablate completion-only masking in OUR pipeline. — SCRIPTS BUILT (2026-06-27), pending
       cluster run.** Implemented as a single `--full-sequence` flag on the A5 baseline trainer
       (`scripts/drac_train_gemma_baseline.py`), so the ONLY variable vs A5 is the loss mask.
@@ -45,6 +46,13 @@ on the full sequence).
       toward ~0.64, completion-only masking *is* the +0.14 driver → gap fully explained, headline
       was a stronger SFT recipe (not CoT). If it stays high, masking is not the cause and we keep
       digging (packing, framework/version).
+- [~] **1e. Packing ablation (Alex-approved). — SCRIPTS BUILT (2026-08-20), pending cluster run.**
+      `--packing` flag on the A5 trainer (TRL `packing=True`, full-sequence loss, no collator —
+      Neo4j's exact published path); wrappers `drac_train_gemma_packing.sh` /
+      `drac_gemma_packing_eval.sh`. Ladder: A5 0.7854 (completion-only) → 1c 0.7415 (full-seq)
+      → packing this run → A2 0.6455 (published adapter). If packing lands near 0.6455, the
+      +0.14 training gap is FULLY explained (masking +0.044 + packing) and the paper's
+      "remainder unexplained" caveat retires; if not, the residual stays flagged.
 - [ ] **1d. Write the verdict.** Two honest outcomes, both fine for the paper:
       (i) we reproduce 0.5560 → harness calibrated, the +0.14 is a real **stronger-SFT-recipe**
       contribution (completion-only masking) worth a paragraph; or (ii) we don't → document the

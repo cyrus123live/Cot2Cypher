@@ -126,7 +126,19 @@ def main():
         "Neo4j's published recipe. Default is completion-only masking. This is "
         "the 1c ablation: the only variable vs the A5 direct-answer baseline.",
     )
+    parser.add_argument(
+        "--packing",
+        action="store_true",
+        help="Reproduce Neo4j's FULL published recipe: TRL packing=True (examples "
+        "concatenated into fixed 1600-token blocks) with full-sequence loss and no "
+        "custom collator. Supersedes --full-sequence (which is packing's loss mask "
+        "without the packing). This is the packing ablation: vs the 1c full-sequence "
+        "arm (GLEU 0.7415) the ONLY variable is packing; if it lands near A2's "
+        "0.6455, the +0.14 training gap is fully explained (masking + packing).",
+    )
     args = parser.parse_args()
+    if args.packing and args.full_sequence:
+        parser.error("--packing already implies full-sequence loss; pass only --packing")
 
     # Load training data — ignore the reasoning field; train on (q, schema) -> cypher
     records = []
@@ -183,20 +195,28 @@ def main():
     )
 
     response_template = "<start_of_turn>model\n"
-    collator = CompletionOnlyCollator(
-        tokenizer=tokenizer,
-        response_template=response_template,
-        max_length=1600,
-        mask_prompt=not args.full_sequence,
-    )
-    print(
-        "Loss masking: "
-        + (
-            "FULL-SEQUENCE (prompt+answer) [1c ablation — matches Neo4j recipe]"
-            if args.full_sequence
-            else "completion-only (answer tokens only) [A5 baseline]"
+    if args.packing:
+        # Neo4j's exact published training path: SFTTrainer(dataset_text_field,
+        # packing=True) — TRL concatenates examples into constant 1600-token
+        # blocks and computes loss on every token. No custom collator.
+        collator = None
+        print("Loss masking: PACKING (Neo4j full recipe: packed 1600-token blocks, "
+              "full-sequence loss) [packing ablation]")
+    else:
+        collator = CompletionOnlyCollator(
+            tokenizer=tokenizer,
+            response_template=response_template,
+            max_length=1600,
+            mask_prompt=not args.full_sequence,
         )
-    )
+        print(
+            "Loss masking: "
+            + (
+                "FULL-SEQUENCE (prompt+answer) [1c ablation — matches Neo4j recipe]"
+                if args.full_sequence
+                else "completion-only (answer tokens only) [A5 baseline]"
+            )
+        )
 
     sft_kwargs = dict(
         output_dir=args.output_dir,
@@ -214,6 +234,8 @@ def main():
         report_to="none",
         dataset_text_field="text",
     )
+    if args.packing:
+        sft_kwargs["packing"] = True
     try:
         training_args = SFTConfig(**sft_kwargs, max_length=1600)
     except TypeError:
@@ -224,8 +246,9 @@ def main():
         args=training_args,
         train_dataset=dataset,
         peft_config=lora_config,
-        data_collator=collator,
     )
+    if collator is not None:
+        trainer_kwargs["data_collator"] = collator
     try:
         trainer = SFTTrainer(**trainer_kwargs, processing_class=tokenizer)
     except TypeError:
