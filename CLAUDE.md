@@ -1549,10 +1549,21 @@ The whole point is apples-to-apples: same base model (Gemma-2-9B-it), same QLoRA
 
 | Formalism | Output structure | Predicted CoT effect | Status |
 |-----------|------------------|----------------------|--------|
-| SQL (`gretelai/synthetic_text_to_sql`) | compositional (joins / sub-queries) | **helps** (positive control) | ▶ FIRST TEST (this commit) |
+| SQL (`gretelai/synthetic_text_to_sql`) | compositional (joins / sub-queries) | **helps** (positive control) | ❌ PREDICTION FAILED — CoT hurts (−0.048 canon EM; deficit stable raw→canon) |
+| SQL (**Spider + execution accuracy** — the decisive control) | compositional | **helps** | ❌ PREDICTION FAILED (2026-08-20) — CoT **−0.0986 exec acc** [−0.124, −0.074], 2× pred errors |
 | Cypher (Neo4j, ZOGRASCOPE) | connected graph pattern (holistic) | **hurts** | ✅ done (−0.017 GLEU; ZOG clean −0.21 exec) |
-| SPARQL (LC-QuAD 2.0) | BGP = connected triple pattern (holistic) | **hurts** (like Cypher) | ▶ FIRST TEST (this commit) |
-| (later) regex / logical forms / nested JSON | spans the axis | tests the predictor | queued |
+| SPARQL (LC-QuAD 2.0) | BGP = connected triple pattern (holistic) | **hurts** (like Cypher) | ✅ done — CoT hurts (−0.147 GLEU [−0.158, −0.137]) |
+| (later) regex / logical forms / nested JSON | spans the axis | tests the predictor | ~~queued~~ moot — see resolution below |
+
+**RESOLUTION (2026-08-20): the compositional-prior theory is DEAD.** The positive control failed —
+CoT hurts SQL in our matched pipeline even on Spider with execution accuracy (direct 0.7669 vs CoT
+0.6683). Per Alex's decision rule, framing C is dead and the paper ships as **A+B** (transfer study
++ matched negative + mechanism), now strengthened: CoT-SFT subtracts in every formalism against our
+strong completion-only direct baseline (12/12 deltas negative, all CIs exclude zero). Best-supported
+account: **baseline strength** (our direct-SFT Gemma at 76.7% Spider dev exceeds STaR-SQL's
+CoT-fine-tuned 75.0%), with output-space structure governing failure modes (Test D fragmentation)
+and remedies (execution grounding), not the sign. Final paper: `paper/transfer_study.tex`. Source of
+truth: `notes/EXPERIMENT_LOG.md` §M.
 
 **The two controls must BOTH land for the paper to work:** SQL must show CoT *helps*
 (positive delta) AND SPARQL must show CoT *hurts* (negative delta). One direction alone

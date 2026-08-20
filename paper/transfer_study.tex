@@ -1,7 +1,7 @@
 % A+B paper: the transfer study (spine) + matched-baseline negative result & Test D mechanism (core).
-% Scaffold generated 2026-07-20. Reuses references.bib. Related Work / Method prose can be ported
-% from paper.tex (archived old paper). Numbers are from notes/EXPERIMENT_LOG.md.
-% DO NOT write toward the compositional-prior claim (C) until the Spider+execution result lands.
+% Scaffold generated 2026-07-20. Reuses references.bib. Numbers are from notes/EXPERIMENT_LOG.md.
+% 2026-08-20: the Spider+execution gate LANDED NEGATIVE (CoT -0.0986 exec acc) -> framing C
+% (compositional prior) is dead per Alex's decision rule; this paper IS the final framing (A+B).
 \documentclass[11pt]{article}
 \usepackage[utf8]{inputenc}
 \usepackage{amsmath,amssymb}
@@ -36,7 +36,11 @@ Our central result is negative and, to our knowledge, the first controlled demon
 distillation---the highest-profile SQL transfer---does \emph{not} improve Text-to-Cypher and
 modestly hurts it. The effect holds across two model families (Gemma-2-9B, Llama-3.1-8B), naive and
 execution-verified traces, and in-distribution, compositional, and length-generalization regimes,
-with paired-bootstrap confidence intervals excluding zero throughout.
+with paired-bootstrap confidence intervals excluding zero throughout. Matched controls extend the
+negative to SPARQL and---under the literature's own execution-accuracy metric, on Spider---to SQL
+itself ($-0.099$): against a strong completion-only SFT recipe, reasoning distillation subtracts
+everywhere we measure, consistent with a \emph{baseline-strength} account of published CoT gains,
+while output-space structure governs the failure modes and the remedies.
 Apparent gains reported under an earlier framing are attributable to a stronger supervised
 fine-tuning recipe and a leaked benchmark split, not to reasoning. We give a causal mechanism: CoT's
 decompositional bias fragments connected graph patterns, and a holistic-reasoning ablation recovers
@@ -73,7 +77,9 @@ show which techniques \emph{do} transfer.
 \begin{enumerate}[leftmargin=*]
   \item \textbf{A controlled matched-baseline result} that CoT distillation does not help, and
   modestly hurts, Text-to-Cypher---across Gemma-2-9B and Llama-3.1-8B, naive and execution-verified
-  traces, and in-distribution / compositional / length-generalization regimes (\S\ref{sec:matched}).
+  traces, and in-distribution / compositional / length-generalization regimes---and that the
+  negative extends under matched controls to SPARQL and to SQL itself (Spider, execution accuracy)
+  (\S\ref{sec:matched}, \S\ref{sec:crossform}).
   \item \textbf{A causal mechanism}: decomposition fragments connected graph patterns; a
   holistic-reasoning ablation recovers $\sim$40\% of the penalty (\S\ref{sec:mech}).
   \item \textbf{A positive transfer}: execution-grounded (MBR) selection beats string voting while
@@ -163,8 +169,10 @@ decomposable}. Three predictions about the SQL toolbox follow:
   little useful diversity, so string-vote self-consistency cannot help.
   \item \textbf{P2 (execution grounding transfers).} Methods that operate on \emph{results} bypass
   the surface-form bottleneck and still help.
-  \item \textbf{P3 (decomposition hurts).} Decomposing a connected pattern fragments it; the right
-  inductive bias for SQL is the wrong one for Cypher.
+  \item \textbf{P3 (decomposition hurts).} Decomposing a connected pattern fragments it: whatever
+  value decomposition has for SQL's separable clauses, it is the wrong inductive bias for Cypher.
+  (P3 predicts harm for Cypher; it is agnostic about the sign for SQL, which \S\ref{sec:crossform}
+  measures directly.)
 \end{itemize}
 
 A corollary sharpens P3. When the benchmark supplies entity values explicitly (as ZOGRASCOPE does),
@@ -320,24 +328,25 @@ Table~\ref{tab:crossform} extends the matched comparison to SPARQL and SQL. CoT 
 (LC-QuAD 2.0 over Wikidata, $n{=}4{,}592$; GLEU $-0.147$, 95\% CI $[-0.158, -0.137]$) as it does
 Cypher---and by a wider margin. Absolute SPARQL accuracy is low for both arms because Wikidata
 identifiers (\texttt{wd:Q\ldots}, \texttt{wdt:P\ldots}) are opaque, but both arms face the same
-entity-linking difficulty, so the delta is internally valid. On synthetic SQL, CoT hurts under string exact match---but our own
-hypothesis (P1 inverted) warns that string metrics undercount SQL correctness, since SQL admits many
-equivalent surface forms. We therefore re-scored the SQL predictions at three levels of increasing
-semantic awareness: raw string EM ($-0.0473$), normalized EM ($-0.0485$), and sqlglot canonical-AST EM
-($-0.0477$; paired bootstrap 95\% CI $[-0.056, -0.039]$, $n{=}5{,}851$). \emph{The deficit does not
-close as the metric becomes more semantic}---the three deltas agree to within $0.001$---so surface
-form is not inflating the gap.
-Per-complexity, CoT is worse or tied in every stratum, including the compositional ones
-(subqueries $-0.041$; CTEs and multi-join near floor for both arms). Canonical-AST EM remains a lower
-bound on semantic equivalence (it does not credit alias renames or \texttt{JOIN}$\leftrightarrow$subquery
-rewrites), so the decisive test is \emph{execution accuracy on Spider}, which is staged and pending;
-we deliberately draw no conclusion here about whether CoT helps SQL in this pipeline.
-\todo{Fill the Spider execution row when the run lands. Per advisor guidance, do not draw the
-compositional-prior conclusion from this table until that number exists.}
+entity-linking difficulty, so the delta is internally valid. For SQL we guard against our own hypothesis (P1 inverted): string metrics undercount SQL
+correctness, since SQL admits many equivalent surface forms, so a string-level CoT deficit could be
+a metric artifact. Two tests rule that out. First, re-scoring the synthetic-SQL predictions at three
+levels of increasing semantic awareness---raw string EM ($-0.0473$), normalized EM ($-0.0485$), and
+sqlglot canonical-AST EM ($-0.0477$; 95\% CI $[-0.056, -0.039]$, $n{=}5{,}851$)---the deficit does
+not close as the metric becomes more semantic, and CoT is worse or tied in every complexity stratum,
+including the compositional ones. Second, and decisively, the matched protocol on \emph{Spider with
+execution accuracy}---the metric the CoT-helps-SQL literature reports---returns the same sign:
+direct $0.7669$ vs.\ CoT $0.6683$ on the 1{,}034-instance dev set, a CoT effect of $-0.0986$
+(95\% CI $[-0.124, -0.074]$), with nearly twice the invalid queries (93 vs.\ 48). \emph{In this
+pipeline, CoT distillation fails to help even the compositional formalism it was designed for.}
+Notably, our direct-answer Gemma-2-9B reaches $76.7\%$ Spider dev execution accuracy---above the
+$75.0\%$ that STaR-SQL reports for CoT-fine-tuned Llama-3.1-8B and well above its $68.6\%$
+direct-SFT baseline \citep{he2025starsql}---a soft comparison across base models, but one that
+locates our pipeline's direct arm at the strong end of the published range.
 
 \begin{table}[t]\centering
 \caption{Matched CoT effect across formalisms (our pipeline), with paired bootstrap 95\% CIs.
-Negative everywhere measured; the decisive SQL execution-accuracy control is pending.}
+Negative everywhere, including SQL under the literature's own execution-accuracy metric.}
 \label{tab:crossform}
 \begin{tabular}{llcc}
 \toprule
@@ -346,7 +355,7 @@ Formalism (dataset) & Metric & CoT effect & 95\% CI \\
 Cypher (Neo4j 2024) & GLEU & $-0.0172$ & $[-0.025, -0.010]$ \\
 SPARQL (LC-QuAD 2.0) & GLEU & $-0.1470$ & $[-0.158, -0.137]$ \\
 SQL (synthetic) & canon.\ EM & $-0.0477$ & $[-0.056, -0.039]$ \\
-SQL (Spider) & execution acc. & \emph{pending} & \\
+SQL (Spider) & execution acc. & $-0.0986$ & $[-0.124, -0.074]$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -471,21 +480,27 @@ because execution results abstract away from surface form entirely, execution-gr
 the transfer that survives (P2). The same property explains all three outcomes---which is what makes
 it a hypothesis rather than a post-hoc grouping.
 
-\paragraph{Why the SQL literature need not contradict this.} Our negative result coexists with the
-SQL evidence once that evidence is read closely. The cleanest same-data CoT-vs-direct comparison in
-STaR-SQL is $+6.4$pp, not the headline $+18$pp (which includes best-of-16 verification); other
-celebrated results bundle CoT with RL or DPO, or prompt frontier models rather than fine-tune small
-ones. So the cross-formalism gap to explain is roughly $+6$pp (SQL) versus $-2$ to $-24$pp (Cypher,
-depending on regime)---and the hypothesis supplies structural reasons: decomposition matches SQL's
-compositional syntax but fragments Cypher's connected patterns; SQL's many equivalent forms give
-sampling-and-selection something to select over; and SQL benchmarks often require inferring literal
-values where ZOGRASCOPE hands them over, converting reasoning from an asset into an accumulation
-risk. A further, sharper possibility is that CoT's benefit shrinks as the direct baseline
-strengthens: our completion-only recipe produces an unusually strong direct model, compressing the
-headroom reasoning could occupy. Under this \emph{baseline-strength} account, some published CoT
-gains may partly measure the weakness of their direct-answer controls. Testing whether CoT helps SQL
-\emph{in this same matched pipeline} under execution accuracy (the staged Spider control) is the
-experiment that would separate these accounts, and we defer any claim until it lands.
+\paragraph{Reconciling with the SQL literature: the baseline-strength account.} The Spider control
+sharpens the story. One might have expected the structural hypothesis to imply a sign flip---CoT
+helping compositional SQL while hurting holistic Cypher---but in our pipeline CoT hurts SQL too,
+under the literature's own execution-accuracy metric ($-0.099$ on Spider dev). Three observations
+reconcile this with the published CoT-helps-SQL results. First, the clean evidence there is thinner
+than its headlines: STaR-SQL's same-data CoT-vs-direct gap is $+6.4$pp (the celebrated $+18$pp
+includes best-of-16 verification), and other celebrated results bundle CoT with RL or DPO, or prompt
+frontier models rather than fine-tune small ones. Second, our direct baselines are unusually strong:
+the completion-only recipe puts our direct-SFT Gemma at $76.7\%$ Spider dev execution
+accuracy---above STaR-SQL's \emph{CoT}-fine-tuned $75.0\%$. Under this \emph{baseline-strength}
+account, published CoT-SFT gains partly measure the weakness of their direct-answer controls, and
+the headroom reasoning could occupy closes as the direct recipe improves. Third, the structural
+hypothesis retains exactly its directly-tested content: the selection asymmetry (P1/P2, a
+Cypher-specific consequence of the canonical output space) and the causal fragmentation mechanism
+(P3, demonstrated by ablation on graph patterns). What the Spider result removes is any temptation
+to read P3 as ``decomposition therefore helps SQL''---the sign of the CoT effect everywhere we
+measure is governed by baseline strength, while the structure of the output space governs the
+\emph{failure modes} (fragmentation for graphs) and \emph{which remedies work} (execution grounding,
+not string diversity). We deliberately refrain from comparing penalty magnitudes across formalisms:
+the benchmarks differ in task character, scale, and metric, so only the within-benchmark sign and
+the mechanism are portable conclusions.
 
 \paragraph{A published artifact is not a control.} The earlier framing of this project reported
 $+0.1227$ GLEU from CoT. The comparison was against a \emph{published} fine-tuned adapter run through
@@ -502,10 +517,11 @@ it.
 %------------------------------------------------------------------
 \section{Limitations}
 %------------------------------------------------------------------
-\textbf{SQL measurement.} Our SQL evidence stops at canonical-AST exact match, a lower bound on
-semantic equivalence; the stability of the CoT deficit across metric levels is suggestive but not
-conclusive, and the Spider execution-accuracy control remains pending. We accordingly claim nothing
-about whether CoT helps SQL in this pipeline. \textbf{Single teacher and scale.} All traces come from
+\textbf{SQL scope.} The SQL negative rests on one synthetic dataset (string and canonical-AST
+metrics) and one Spider run (execution accuracy); Spider dev is the standard but not the hardest SQL
+benchmark, and harder value-inference-heavy benchmarks (e.g.\ BIRD) could in principle give
+reasoning more to contribute. Our claim is therefore that CoT-SFT does not help SQL \emph{in this
+matched strong-baseline pipeline}, not that it never helps SQL. \textbf{Single teacher and scale.} All traces come from
 one teacher (GPT-oss-120B) in one format family, and both student families are 8--9B models; a
 different teacher, trace style, or scale could shift the deltas, though the holistic/enumeration
 ladder shows the effect is not an artifact of one trace format. \textbf{Benchmark leakage.} Neo4j
@@ -514,10 +530,10 @@ carry different gold queries---which we exploit as evidence in \S\ref{sec:robust
 on this benchmark should be read with that in mind. \textbf{Live-database drift.} Neo4j execution
 evaluation runs against public demo databases whose state changes over time (reference-failure counts
 varied from 166 to 51 between our evaluation dates); within-run comparisons are unaffected, but
-cross-run execution numbers carry a small same-denominator caveat. \textbf{Uncertainty.} Every reported CoT delta carries a paired bootstrap 95\% CI, and all eleven
+cross-run execution numbers carry a small same-denominator caveat. \textbf{Uncertainty.} Every reported CoT delta carries a paired bootstrap 95\% CI, and all twelve
 exclude zero (Tables~\ref{tab:matched}, \ref{tab:zog}, and~\ref{tab:crossform}). Each arm is,
 however, a single training run, so seed-to-seed training variance is not measured; the effect's
-directional consistency across eleven independent comparisons, two model families, and three
+directional consistency across twelve independent comparisons, two model families, and three
 formalisms is the practical guard against a single-seed artifact. \textbf{Task character.} ZOGRASCOPE supplies entity values in the question,
 making it a copy-and-place task; benchmarks requiring value inference may dilute (or reverse) the
 error-accumulation component of the mechanism, though the fragmentation component is task-independent.
@@ -531,12 +547,15 @@ voting) and a careful SFT recipe (completion-only loss masking on schema-heavy p
 direct-answer model far above the published baseline). Chain-of-thought distillation---the
 highest-profile candidate---does not: it modestly degrades Text-to-Cypher across two model
 families, across naive and execution-verified traces, and across in-distribution, compositional,
-and length-generalization regimes; string-diversity self-consistency fails alongside it. The constrained-output-space
-hypothesis predicts this pattern and the mechanism analysis explains it: Cypher's connected graph
-patterns are globally coupled objects with near-canonical surface forms, so decomposition fragments
-them (causally shown), reasoning-first generation accumulates copy errors, and sampling yields no
-diversity worth voting over---while execution results, which bypass surface form entirely, remain a
-useful signal. The broader lesson is methodological: the apparent CoT gain that motivated this
+and length-generalization regimes; string-diversity self-consistency fails alongside it, and
+matched controls return the same sign for SPARQL and for SQL itself on Spider under execution
+accuracy. The constrained-output-space hypothesis explains the Cypher-specific pattern
+mechanistically: connected graph patterns are globally coupled objects with near-canonical surface
+forms, so decomposition fragments them (causally shown), reasoning-first generation accumulates
+copy errors, and sampling yields no diversity worth voting over---while execution results, which
+bypass surface form entirely, remain a useful signal. The uniform sign across formalisms points to
+a complementary cause: against a strong direct-answer recipe, reasoning distillation has no
+headroom left to occupy. The broader lesson is methodological: the apparent CoT gain that motivated this
 project was an artifact of borrowing a published model as a control, and it took a matched
 in-pipeline baseline to find the sign of the true effect. Toolboxes do not transfer by default;
 controls do not transfer at all.

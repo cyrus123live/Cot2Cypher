@@ -224,6 +224,36 @@ def main():
     p, lo, hi = boot_binary(xd, xc, rng)
     out["sql_canon_em"] = {"delta": p, "lo": lo, "hi": hi, "n": len(xd)}
 
+    # --- Spider execution accuracy (local DBs; same scoring as eval_spider_execution)
+    spider_d = "results/results_spider/predictions_spider_direct.jsonl"
+    spider_c = "results/results_spider/predictions_spider_cot.jsonl"
+    spider_db = "data/spider/spider_data/database"
+    if os.path.isdir(spider_db) and os.path.exists(spider_d) and os.path.exists(spider_c):
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from eval_spider_execution import execute, rows_match, db_path_for
+        d = {r["instance_id"]: r for r in load_jsonl(spider_d)}
+        c = {r["instance_id"]: r for r in load_jsonl(spider_c)}
+        ids = sorted(set(d) & set(c))
+        assert len(ids) == len(d) == len(c)
+        xd, xc = [], []
+        for i in ids:
+            db = db_path_for(spider_db, d[i]["db_id"])
+            gold_rows, gold_err = execute(db, d[i]["reference_sql"])
+            if gold_err is not None:
+                continue  # same skip rule as score_file
+            for rec, outarr in ((d[i], xd), (c[i], xc)):
+                rows, err = execute(db, rec["predicted_sql"])
+                order = "order by" in rec["reference_sql"].lower()
+                outarr.append(err is None and rows_match(rows, gold_rows, order))
+        xd, xc = np.array(xd), np.array(xc)
+        print(f"spider local re-score: direct {xd.mean():.4f}, cot {xc.mean():.4f} "
+              f"(n={len(xd)}; Fir reported 0.7669 / 0.6683)", file=sys.stderr)
+        p, lo, hi = boot_binary(xd, xc, rng)
+        out["spider_exec_acc"] = {"delta": p, "lo": lo, "hi": hi, "n": len(xd)}
+    else:
+        print("SKIP spider exec CI: results_spider/ or spider databases not found",
+              file=sys.stderr)
+
     # --- SPARQL GLEU (LC-QuAD 2.0; same HF google_bleu as the Cypher arms)
     sparql_d = "results/results_sparql/predictions_sparql_direct.jsonl"
     sparql_c = "results/results_sparql/predictions_sparql_cot.jsonl"

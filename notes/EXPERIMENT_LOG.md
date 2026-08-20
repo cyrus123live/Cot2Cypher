@@ -227,6 +227,39 @@ shows CoT hurting, that completes a consistent triple (string / canonical-AST / 
 
 Output: `results/sql_semantic_rescore.txt`.
 
+## M. Spider + execution SQL control — THE GATE LANDS NEGATIVE (2026-08-20)
+
+The experiment Alex designated as the decision gate for framing C (compositional prior). Matched
+direct-vs-CoT on Spider (train on Spider train with gpt-oss-120b traces, identical protocol), eval
+on the 1,034-instance dev set with **execution accuracy** — the metric the CoT-helps-SQL literature
+reports. Ran on Fir (job 55432531, ~16h H100); local re-score against `data/spider/spider_data/database`
+reproduces Fir's numbers exactly.
+
+| Arm | GLEU | String EM | **Exec acc** | Pred errors |
+|-----|:----:|:---------:|:------------:|:-----------:|
+| Direct | 0.5907 | 0.2331 | **0.7669** | 48 |
+| CoT | 0.5288 | 0.1567 | 0.6683 | 93 |
+
+**CoT effect on execution accuracy: −0.0986, paired bootstrap 95% CI [−0.124, −0.074]** (§ CI table
+now 12/12 excluding zero). CoT also nearly doubles invalid queries (93 vs 48).
+
+**Consequences:**
+1. **Framing C is dead** per Alex's decision rule ("if Spider+execution still shows CoT hurts SQL,
+   C is dead and we ship A+B"). The paper's final framing is the A+B transfer study.
+2. The SQL string-metric deficit (§L) is confirmed real by execution — the metric-artifact escape
+   hatch is fully closed (string → canonical-AST → execution, same sign).
+3. **Baseline-strength becomes the best-supported account** of the gap to the literature: our
+   direct-SFT Gemma hits 76.7% Spider dev exec acc — above STaR-SQL's *CoT*-fine-tuned 75.0%
+   (Llama-3.1-8B; soft cross-model comparison) and far above its 68.6% direct-SFT. Against a strong
+   completion-only direct baseline, CoT-SFT subtracts in every formalism we measure.
+4. The constrained-output-space hypothesis keeps its directly-tested content (P1/P2 selection
+   asymmetry; Test D causal fragmentation for Cypher) but the implied cross-formalism sign flip
+   ("CoT should help compositional SQL") did not materialize in-pipeline.
+
+Files: `results/results_spider/{predictions,metrics}_spider_{direct,cot}.*`; CI in
+`results/bootstrap_cis.json` (`spider_exec_acc`). Paper updated: Spider row filled, discussion
+rewritten around the baseline-strength account, last TODO removed.
+
 ## Bottom line
 
 **CoT distillation does not help Text2Cypher in ANY clean comparison — seven now, all negative:**
@@ -245,7 +278,8 @@ Output: `results/sql_semantic_rescore.txt`.
 - The original "+0.1227 GLEU from CoT" was the pipeline, not CoT (matched control A5).
 - **Execution-based selection (B2) beats string voting (B1)** — the one small positive transfer-study finding.
 - The "ZOGRASCOPE SOTA on length" was a leakage artifact; the clean redo reverses it.
-- The SQL-control CoT deficit (−0.047) survives SQL-aware canonical-AST re-scoring (§L) — not a metric artifact; Spider+execution is the remaining gate for framing C.
+- The SQL-control CoT deficit (−0.047) survives SQL-aware canonical-AST re-scoring (§L) — not a metric artifact.
+- **The Spider+execution gate landed negative (§M): CoT −0.0986 exec acc on Spider dev.** CoT hurts even SQL in this pipeline. Framing C (compositional prior) is dead; the paper ships as the A+B transfer study with the baseline-strength account.
 
 **Remaining (optional / calibration):** Neo4j harness calibration (reproduce published 0.5560); packing ablation for the unexplained recipe-gap remainder. Neither can change the conclusion. *(A5 exec EM landed 2026-07-27: 0.2975 — CoT effect −0.0421, the seventh clean negative comparison.)*
 
