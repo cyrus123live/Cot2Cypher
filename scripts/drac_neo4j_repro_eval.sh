@@ -27,9 +27,18 @@
 # leaderboard scale. If not -> the residual is framework/version and stays
 # documented as such. Neither outcome changes any conclusion.
 #
-# PREREQUISITE (login node, has internet) — pre-download the published adapter:
-#   HF_HOME=~/scratch/hf_cache python -c "from huggingface_hub import snapshot_download; \
-#       snapshot_download('neo4j/text2cypher-gemma-2-9b-it-finetuned-2024v1')"
+# PREREQUISITE (login node, has internet) — provide the published adapter by EITHER:
+#   (a) hf_hub download into the cache:
+#       module load python/3.11
+#       python -m pip install --no-index --user huggingface_hub
+#       HF_HOME=~/scratch/hf_cache python -c "from huggingface_hub import snapshot_download; \
+#           print(snapshot_download('neo4j/text2cypher-gemma-2-9b-it-finetuned-2024v1'))"
+#       python -m pip uninstall -y huggingface_hub   # avoid shadowing job venvs
+#   (b) a plain git-lfs clone (no python needed):
+#       module load git-lfs && cd ~/scratch && \
+#       git clone https://huggingface.co/neo4j/text2cypher-gemma-2-9b-it-finetuned-2024v1 \
+#           neo4j_published_adapter
+#   The job checks ~/scratch/neo4j_published_adapter first, then the HF cache.
 #
 # Output: ~/scratch/results_neo4j_repro/predictions_cot_greedy.jsonl
 # (prefix fixed by drac_inference.py; the directory disambiguates)
@@ -59,8 +68,11 @@ export HF_TOKEN=$(cat ~/.cache/huggingface/token 2>/dev/null || echo "")
 export BNB_CUDA_VERSION=129
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-echo "Resolving the published Neo4j adapter from the HF cache..."
-ADAPTER_DIR=$(python - <<'EOF'
+echo "Resolving the published Neo4j adapter..."
+if [ -f ~/scratch/neo4j_published_adapter/adapter_config.json ]; then
+    ADAPTER_DIR=~/scratch/neo4j_published_adapter
+else
+    ADAPTER_DIR=$(python - <<'EOF'
 from huggingface_hub import snapshot_download
 repo = "neo4j/text2cypher-gemma-2-9b-it-finetuned-2024v1"
 try:
@@ -69,7 +81,8 @@ except Exception:
     p = snapshot_download(repo)  # compute node may lack internet; see header
 print(p)
 EOF
-)
+    )
+fi
 if [ -z "$ADAPTER_DIR" ] || [ ! -d "$ADAPTER_DIR" ]; then
     echo "FATAL: could not resolve the published adapter. Pre-download it on the" >&2
     echo "       login node (see the PREREQUISITE in this script's header)." >&2
