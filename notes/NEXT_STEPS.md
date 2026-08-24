@@ -28,25 +28,20 @@ on the full sequence).
       the prompt (`DataCollatorForCompletionOnlyLM`), so the configs differ in the one place that
       matters most. With a ~30:1 schema:answer token ratio, full-sequence loss spends ~97% of the
       gradient reconstructing schemas — a plausible mechanism for the +0.14 GLEU training gap.
-- [~] **1b. Reproduce the published 0.5560. — SCRIPT BUILT (2026-08-20), pending cluster run.**
+- [~] **1b. Reproduce the published 0.5560. — SUBMITTED ON FIR (2026-08-20), awaiting result.**
       Implemented as `scripts/drac_neo4j_repro_eval.sh`: the published adapter through
       `drac_inference.py` with `--no-cot-prompt --max-length 1600` (right-truncation, greedy,
-      4-bit — identical to A2 except the truncation). Prereq: pre-download the adapter on the
-      login node (see script header). If it lands near 0.5560 → harness calibrated to the
+      4-bit — identical to A2 except the truncation). Adapter provided via git-lfs clone at
+      `~/scratch/neo4j_published_adapter/` (the hf_hub route hit a CVMFS Errno-5 on the login
+      node; the job now accepts either). If it lands near 0.5560 → harness calibrated to the
       leaderboard scale; if not → residual is framework/version, stays documented.
-- [~] **1c. Ablate completion-only masking in OUR pipeline. — SCRIPTS BUILT (2026-06-27), pending
-      cluster run.** Implemented as a single `--full-sequence` flag on the A5 baseline trainer
-      (`scripts/drac_train_gemma_baseline.py`), so the ONLY variable vs A5 is the loss mask.
-      Submission wrappers: `scripts/drac_train_gemma_fullseq.sh` (train → `~/scratch/gemma_fullseq_adapter/`)
-      and `scripts/drac_gemma_fullseq_eval.sh` (eval with matched `--no-cot-prompt` →
-      `~/scratch/results_gemma_fullseq/`). **Run on DRAC (Fir):**
-      `sbatch scripts/drac_train_gemma_fullseq.sh` then `sbatch scripts/drac_gemma_fullseq_eval.sh`
-      (sync `scripts/` + `data/cot_training_data.jsonl` to `~/scratch/thesis/` first).
-      **Interpretation:** A5 completion-only = GLEU 0.7854 / EM 0.4331. If 1c full-sequence drops
-      toward ~0.64, completion-only masking *is* the +0.14 driver → gap fully explained, headline
-      was a stronger SFT recipe (not CoT). If it stays high, masking is not the cause and we keep
-      digging (packing, framework/version).
-- [~] **1e. Packing ablation (Alex-approved). — SCRIPTS BUILT (2026-08-20), pending cluster run.**
+- [x] **1c. Ablate completion-only masking in OUR pipeline. — DONE (ran on Fir).** Result:
+      full-sequence GLEU **0.7415** vs A5 completion-only **0.7854** → masking accounts for
+      **+0.044** of the +0.14 training gap (~31%). Masking is a real, causal contributor but not
+      the whole story → packing became the next suspect (1e). In the paper as the recipe
+      paragraph's controlled ablation.
+- [~] **1e. Packing ablation (Alex-approved). — SUBMITTED ON FIR (2026-08-20), train→eval chained
+      via --dependency, awaiting result.**
       `--packing` flag on the A5 trainer (TRL `packing=True`, full-sequence loss, no collator —
       Neo4j's exact published path); wrappers `drac_train_gemma_packing.sh` /
       `drac_gemma_packing_eval.sh`. Ladder: A5 0.7854 (completion-only) → 1c 0.7415 (full-seq)
