@@ -30,7 +30,17 @@ module load python/3.11
 module load scipy-stack
 module load gcc arrow
 
-virtualenv --no-download --system-site-packages $SLURM_TMPDIR/env
+set -eo pipefail  # fail LOUDLY -- a silent venv/CVMFS failure previously printed "Done"
+
+# CVMFS can throw transient Errno-5 I/O errors seeding the venv (seen on fc10620);
+# retry a few times before giving up.
+for attempt in 1 2 3; do
+    if virtualenv --no-download --system-site-packages $SLURM_TMPDIR/env; then break; fi
+    echo "virtualenv attempt $attempt failed; retrying in 30s..." >&2
+    rm -rf $SLURM_TMPDIR/env
+    sleep 30
+    if [ "$attempt" = 3 ]; then echo "FATAL: virtualenv failed 3x (CVMFS?)" >&2; exit 1; fi
+done
 source $SLURM_TMPDIR/env/bin/activate
 pip install --no-index --upgrade pip
 
