@@ -384,8 +384,16 @@ configurations differ in one decisive place: the published recipe trains with fu
 schema-heavy prompts (with a $\sim$30:1 schema-to-answer token ratio, $\sim$97\% of the gradient
 reconstructs schemas), while ours masks the prompt and spends the entire loss on the query. A
 controlled full-sequence ablation of our own pipeline attributes $+0.044$ GLEU to the masking choice
-alone ($0.7854$ completion-only vs.\ $0.7415$ full-sequence); the remainder of the training gap is
-unexplained (sequence packing is the leading suspect) and we flag it as such. The practical point
+alone ($0.7854$ completion-only vs.\ $0.7415$ full-sequence), and adding sequence packing---thereby
+reproducing the published recipe's documented training choices in full---costs only a further
+$0.009$ ($0.7330$). The documented recipe knobs thus account for $\approx0.05$ of the $+0.14$
+training gap; the remaining $\approx0.09$ persists even when the published recipe is retrained in
+our own pipeline and evaluated identically (our recipe-reproduction model still scores $0.7330$
+vs.\ the published artifact's $0.6455$ under the same inference), placing the residual at the
+implementation level---framework and library versions, data formatting---rather than in any
+documented hyperparameter, and we flag it as such. This sharpens the paper's methodological point
+from the other side: the published artifact was not reproducible from its documented configuration
+even before it was mistaken for a control. The practical point
 stands independently: completion-only masking on long-schema inputs is a cheap, reusable recipe
 improvement, and the model it produces is---to our knowledge---the strongest open-weight result on
 this benchmark under our harness, with the important caveat that cross-harness absolute comparisons

@@ -194,10 +194,27 @@ their loss is ~97% schema-reconstruction; ours is 100% Cypher — a mechanism fu
 **Reality checks:** not leakage (A5 scores 0.59 EM on *unseen* vs 0.17 on seen, §C); GLEU-inflated
 (exec-EM gap vs published Gemma 0.2104 is only ~+0.05–0.08 — the believable semantic margin).
 
-**1c (pending):** `--full-sequence` ablation on the A5 trainer (only the loss mask differs).
-Scripts: `drac_train_gemma_fullseq.sh` / `drac_gemma_fullseq_eval.sh`. If GLEU drops 0.7854 → ~0.64,
-masking is confirmed as THE driver. **Reframes the headline:** the gain mis-attributed to CoT was a
-stronger direct-answer SFT recipe (completion-only masking on long-schema inputs).
+**1c result (ran on Fir):** full-sequence GLEU **0.7415** vs A5 completion-only 0.7854 → masking
+accounts for **+0.044** (~31% of the +0.14). Real and causal, but not the whole story.
+
+**Packing ablation result (2026-09-08, Fir job 56628140/56628142):** `--packing` on the A5 trainer =
+Neo4j's full documented recipe (packed 1600-token blocks, full-sequence loss, no collator) in OUR
+pipeline: **GLEU 0.7330 / String EM 0.3751** (n=4,833). Packing adds only **−0.009** GLEU beyond
+full-sequence loss — the suspect is largely exonerated. **The completed ladder:**
+
+| Config (same data, same QLoRA, our pipeline unless noted) | GLEU |
+|---|:---:|
+| A5 — completion-only masking (our recipe) | 0.7854 |
+| 1c — full-sequence loss | 0.7415 |
+| Packing — full-sequence + packing = Neo4j's documented recipe | **0.7330** |
+| A2 — Neo4j's actual published adapter, same inference | 0.6455 |
+
+**Verdict on the +0.14 training gap:** documented recipe knobs explain ≈0.05 (masking +0.044,
+packing +0.009); the residual **≈+0.088 persists even when the published recipe is retrained
+in-pipeline and evaluated identically** → implementation-level (framework/library versions, data
+formatting), not documented hyperparameters. Two-sided methodological lesson: the published
+artifact is not reproducible from its documented config — one more reason it could never have
+served as a control. Paper's recipe paragraph updated accordingly (caveat sharpened, not retired).
 
 ## L. SQL-aware re-score of the SQL control — deficit is NOT a metric artifact (2026-07-27)
 
@@ -281,6 +298,6 @@ rewritten around the baseline-strength account, last TODO removed.
 - The SQL-control CoT deficit (−0.047) survives SQL-aware canonical-AST re-scoring (§L) — not a metric artifact.
 - **The Spider+execution gate landed negative (§M): CoT −0.0986 exec acc on Spider dev.** CoT hurts even SQL in this pipeline. Framing C (compositional prior) is dead; the paper ships as the A+B transfer study with the baseline-strength account.
 
-**Remaining (optional / calibration):** Neo4j harness calibration (reproduce published 0.5560); packing ablation for the unexplained recipe-gap remainder. Neither can change the conclusion. *(A5 exec EM landed 2026-07-27: 0.2975 — CoT effect −0.0421, the seventh clean negative comparison.)*
+**Remaining (optional / calibration):** Neo4j harness calibration only (reproduce published 0.5560; first attempt TIMEOUT at 12h on 2026-08-24 — truncated prompts lose the "Cypher output:" cue and the model rambles to the generation cap; checkpointed, resumable). Cannot change any conclusion. *(A5 exec EM landed 2026-07-27: 0.2975. Packing ablation landed 2026-09-08: 0.7330 — recipe knobs ≈0.05 of the +0.14 gap, residual is implementation-level; see §K.)*
 
 **The honest paper:** *"Chain-of-thought distillation does not improve Text2Cypher — in-distribution or under distribution shift, with naive or execution-verified traces, across two model families. Apparent gains in prior framing were a stronger SFT recipe and a leaked benchmark split. Among Text-to-SQL techniques, only execution-based selection transfers; diversity- and reasoning-based methods do not, consistent with Cypher's constrained output space."*

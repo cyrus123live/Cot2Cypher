@@ -28,7 +28,10 @@ on the full sequence).
       the prompt (`DataCollatorForCompletionOnlyLM`), so the configs differ in the one place that
       matters most. With a ~30:1 schema:answer token ratio, full-sequence loss spends ~97% of the
       gradient reconstructing schemas — a plausible mechanism for the +0.14 GLEU training gap.
-- [~] **1b. Reproduce the published 0.5560. — SUBMITTED ON FIR (2026-08-20), awaiting result.**
+- [~] **1b. Reproduce the published 0.5560. — TIMEOUT at 12h (2026-08-24, job 56628143);
+      checkpointed + resumable, resubmit with a longer wall.** Slow because 1600-token truncation
+      chops the "Cypher output:" cue off long-schema prompts → model generates to the 1024-token
+      cap on those examples (itself corroborating the truncation-hurts mechanism).
       Implemented as `scripts/drac_neo4j_repro_eval.sh`: the published adapter through
       `drac_inference.py` with `--no-cot-prompt --max-length 1600` (right-truncation, greedy,
       4-bit — identical to A2 except the truncation). Adapter provided via git-lfs clone at
@@ -40,8 +43,11 @@ on the full sequence).
       **+0.044** of the +0.14 training gap (~31%). Masking is a real, causal contributor but not
       the whole story → packing became the next suspect (1e). In the paper as the recipe
       paragraph's controlled ablation.
-- [~] **1e. Packing ablation (Alex-approved). — SUBMITTED ON FIR (2026-08-20), train→eval chained
-      via --dependency, awaiting result.**
+- [x] **1e. Packing ablation — DONE (2026-09-08, jobs 56628140/56628142).** GLEU **0.7330** /
+      EM 0.3751: packing adds only −0.009 beyond full-sequence loss. Recipe knobs total ≈0.05 of
+      the +0.14 gap; residual ≈+0.088 is implementation-level (the full documented recipe,
+      retrained in-pipeline, still beats the published artifact by +0.088 under identical
+      inference). Paper recipe paragraph + EXPERIMENT_LOG §K updated.
       `--packing` flag on the A5 trainer (TRL `packing=True`, full-sequence loss, no collator —
       Neo4j's exact published path); wrappers `drac_train_gemma_packing.sh` /
       `drac_gemma_packing_eval.sh`. Ladder: A5 0.7854 (completion-only) → 1c 0.7415 (full-seq)
