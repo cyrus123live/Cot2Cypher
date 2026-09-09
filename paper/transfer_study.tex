@@ -15,7 +15,6 @@
 \usepackage{listings}
 
 \geometry{margin=1in}
-\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
 
 \title{What Transfers from Text-to-SQL to Text-to-Cypher?\\A Controlled Study of Reasoning, Selection, and Training Recipe}
 \author{Cyrus Parsons}
@@ -264,9 +263,9 @@ Llama-3.1-8B & direct & \textbf{0.7680} & \textbf{0.4223} & \textbf{0.2865} \\
 Llama-3.1-8B & CoT    & 0.7416 & 0.3000 & 0.2161 \\
 \midrule
 \multicolumn{2}{l}{CoT effect (Gemma)} & $-0.0172$ & $-0.0532$ & $-0.0421$ \\
-& & {\scriptsize$[-0.025, -0.010]$} & {\scriptsize$[-0.063, -0.044]$} & {\scriptsize$[-0.060, -0.025]$} \\
+& & {\scriptsize$[-0.025, -0.010]$} & {\scriptsize$[-0.062, -0.044]$} & {\scriptsize$[-0.059, -0.025]$} \\
 \multicolumn{2}{l}{CoT effect (Llama)} & $-0.0264$ & $-0.1223$ & $-0.0704$ \\
-& & {\scriptsize$[-0.039, -0.011]$} & {\scriptsize$[-0.134, -0.111]$} & {\scriptsize$[-0.087, -0.053]$} \\
+& & {\scriptsize$[-0.039, -0.011]$} & {\scriptsize$[-0.133, -0.111]$} & {\scriptsize$[-0.087, -0.053]$} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -316,8 +315,8 @@ paired bootstrap 95\% CIs on the difference all exclude zero.}
 Split & $n$ & Direct & CoT & $\Delta$ (direct $-$ CoT) [95\% CI] \\
 \midrule
 IID            & 768  & 0.8255 & 0.6094 & $+0.216$ \; $[+0.184, +0.249]$ \\
-Compositional  & 1349 & 0.6612 & 0.4181 & $+0.243$ \; $[+0.214, +0.273]$ \\
-Length (dist.\ shift) & 1253 & 0.4397 & 0.2306 & $+0.209$ \; $[+0.177, +0.241]$ \\
+Compositional  & 1349 & 0.6612 & 0.4181 & $+0.243$ \; $[+0.213, +0.274]$ \\
+Length (dist.\ shift) & 1253 & 0.4397 & 0.2306 & $+0.209$ \; $[+0.178, +0.241]$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -328,7 +327,9 @@ Table~\ref{tab:crossform} extends the matched comparison to SPARQL and SQL. CoT 
 (LC-QuAD 2.0 over Wikidata, $n{=}4{,}592$; GLEU $-0.147$, 95\% CI $[-0.158, -0.137]$) as it does
 Cypher---and by a wider margin. Absolute SPARQL accuracy is low for both arms because Wikidata
 identifiers (\texttt{wd:Q\ldots}, \texttt{wdt:P\ldots}) are opaque, but both arms face the same
-entity-linking difficulty, so the delta is internally valid. For SQL we guard against our own hypothesis (P1 inverted): string metrics undercount SQL
+entity-linking difficulty, so the delta is internally valid.
+
+For SQL we guard against our own hypothesis (P1 inverted): string metrics undercount SQL
 correctness, since SQL admits many equivalent surface forms, so a string-level CoT deficit could be
 a metric artifact. Two tests rule that out. First, re-scoring the synthetic-SQL predictions at three
 levels of increasing semantic awareness---raw string EM ($-0.0473$), normalized EM ($-0.0485$), and
@@ -547,7 +548,7 @@ varied from 166 to 51 between our evaluation dates); within-run comparisons are 
 cross-run execution numbers carry a small same-denominator caveat. \textbf{Uncertainty.} Every reported CoT delta carries a paired bootstrap 95\% CI, and all twelve
 exclude zero (Tables~\ref{tab:matched}, \ref{tab:zog}, and~\ref{tab:crossform}). Each arm is,
 however, a single training run, so seed-to-seed training variance is not measured; the effect's
-directional consistency across twelve independent comparisons, two model families, and three
+directional consistency across twelve comparisons, two model families, and three
 formalisms is the practical guard against a single-seed artifact. \textbf{Task character.} ZOGRASCOPE supplies entity values in the question,
 making it a copy-and-place task; benchmarks requiring value inference may dilute (or reverse) the
 error-accumulation component of the mechanism, though the fragmentation component is task-independent.
