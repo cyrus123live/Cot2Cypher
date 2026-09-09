@@ -377,9 +377,9 @@ bounded by that 16\%.
 
 \paragraph{Training recipe.} The second surviving positive is mundane but large: our direct-answer
 model exceeds the published fine-tuned baseline by $+0.23$ GLEU ($0.7854$ vs.\ $0.5560$). This
-decomposes into $+0.09$ of \emph{evaluation harness} (running the published adapter through our own
-inference---full-schema prompts rather than 1{,}600-token truncation---yields $0.6455$; GLEU is also
-highly sensitive to tokenization for punctuation-dense Cypher) and $+0.14$ of \emph{training}. The
+decomposes into $+0.09$ of \emph{evaluation harness} (the same published weights score $0.6455$
+under our inference vs.\ $0.5560$ published; GLEU is also highly sensitive to tokenization for
+punctuation-dense Cypher) and $+0.14$ of \emph{training}. The
 configurations differ in one decisive place: the published recipe trains with full-sequence loss over
 schema-heavy prompts (with a $\sim$30:1 schema-to-answer token ratio, $\sim$97\% of the gradient
 reconstructs schemas), while ours masks the prompt and spends the entire loss on the query. A
@@ -391,9 +391,15 @@ training gap; the remaining $\approx0.09$ persists even when the published recip
 our own pipeline and evaluated identically (our recipe-reproduction model still scores $0.7330$
 vs.\ the published artifact's $0.6455$ under the same inference), placing the residual at the
 implementation level---framework and library versions, data formatting---rather than in any
-documented hyperparameter, and we flag it as such. This sharpens the paper's methodological point
-from the other side: the published artifact was not reproducible from its documented configuration
-even before it was mistaken for a control. The practical point
+documented hyperparameter, and we flag it as such. The harness component resists
+documentation-level reproduction symmetrically: the natural hypothesis for the published
+$0.5560$---inference truncated at the training length of 1{,}600 tokens---collapses corpus GLEU to
+$0.196$ when tried (truncation deletes the output cue from the $\sim$9\% of prompts that exceed the
+limit; those generations run to the token cap and dominate the corpus-level denominator, while the
+untruncated remainder scores $0.67$), so no plain truncation setting yields the published number
+either. This sharpens the paper's methodological point from the other side: neither the published
+artifact (from its documented recipe) nor its published score (from its documented inference) was
+reproducible---even before the artifact was mistaken for a control. The practical point
 stands independently: completion-only masking on long-schema inputs is a cheap, reusable recipe
 improvement, and the model it produces is---to our knowledge---the strongest open-weight result on
 this benchmark under our harness, with the important caveat that cross-harness absolute comparisons

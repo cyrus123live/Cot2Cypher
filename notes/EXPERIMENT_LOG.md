@@ -216,6 +216,20 @@ formatting), not documented hyperparameters. Two-sided methodological lesson: th
 artifact is not reproducible from its documented config — one more reason it could never have
 served as a control. Paper's recipe paragraph updated accordingly (caveat sharpened, not retired).
 
+**1b harness-calibration result (2026-09-09; job resumed after 12h TIMEOUT, 24h wall):** published
+adapter + model-card prompt + hard right-truncation at max_length=1600 (the natural reading of
+"their training length at inference") → **GLEU 0.1965 / String EM 0.1792** (n=4,833). NOT ≈0.5560:
+truncation deletes the "Cypher output:" cue from the 8.8% of prompts >1600 tokens; those
+generations run to the 1,024-token cap and dominate the corpus-GLEU denominator (excluding them,
+the untruncated 4,406 score **0.6725** — A2-like; EM barely moves, 0.179 vs A2's 0.192, since
+truncated-prompt outputs were never exact matches anyway). **So no plain truncation setting
+reproduces 0.5560** — full schema gives 0.6455, truncation gives 0.196. **1d verdict = outcome
+(ii), both halves measured:** neither the published artifact (from its documented recipe → 0.7330
+vs its 0.6455) nor its published score (from its documented inference → 0.196 or 0.6455, never
+0.5560) is reproducible from documentation. The +0.09 harness component is real (same weights, two
+harnesses) but mechanistically unattributed; cross-harness absolute comparisons are hereby
+formally distrusted. Files: `results/results_neo4j_repro/`. Item 1 is CLOSED.
+
 ## L. SQL-aware re-score of the SQL control — deficit is NOT a metric artifact (2026-07-27)
 
 Tests the metric-artifact escape hatch for the SQL CoT "negative" (gretelai synthetic_text_to_sql,
@@ -298,6 +312,6 @@ rewritten around the baseline-strength account, last TODO removed.
 - The SQL-control CoT deficit (−0.047) survives SQL-aware canonical-AST re-scoring (§L) — not a metric artifact.
 - **The Spider+execution gate landed negative (§M): CoT −0.0986 exec acc on Spider dev.** CoT hurts even SQL in this pipeline. Framing C (compositional prior) is dead; the paper ships as the A+B transfer study with the baseline-strength account.
 
-**Remaining (optional / calibration):** Neo4j harness calibration only (reproduce published 0.5560; first attempt TIMEOUT at 12h on 2026-08-24 — truncated prompts lose the "Cypher output:" cue and the model rambles to the generation cap; checkpointed, resumable). Cannot change any conclusion. *(A5 exec EM landed 2026-07-27: 0.2975. Packing ablation landed 2026-09-08: 0.7330 — recipe knobs ≈0.05 of the +0.14 gap, residual is implementation-level; see §K.)*
+**Remaining: nothing.** Every planned experiment has run. *(A5 exec EM 2026-07-27: 0.2975. Packing ablation 2026-09-08: 0.7330. 1b calibration 2026-09-09: 0.1965 — no truncation setting reproduces the published 0.5560; §K verdict: neither the published artifact nor its score is reproducible from documentation, so cross-harness absolutes are formally distrusted and within-pipeline deltas are the paper's only currency.)*
 
 **The honest paper:** *"Chain-of-thought distillation does not improve Text2Cypher — in-distribution or under distribution shift, with naive or execution-verified traces, across two model families. Apparent gains in prior framing were a stronger SFT recipe and a leaked benchmark split. Among Text-to-SQL techniques, only execution-based selection transfers; diversity- and reasoning-based methods do not, consistent with Cypher's constrained output space."*

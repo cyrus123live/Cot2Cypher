@@ -1,0 +1,6 @@
+{
+  "total_examples": 4833,
+  "gleu_score": 0.1964701741186167,
+  "exact_match_ratio": 0.1791847713635423,
+  "exact_match_count": 866
+}

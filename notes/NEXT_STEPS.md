@@ -28,10 +28,11 @@ on the full sequence).
       the prompt (`DataCollatorForCompletionOnlyLM`), so the configs differ in the one place that
       matters most. With a ~30:1 schema:answer token ratio, full-sequence loss spends ~97% of the
       gradient reconstructing schemas — a plausible mechanism for the +0.14 GLEU training gap.
-- [~] **1b. Reproduce the published 0.5560. — TIMEOUT at 12h (2026-08-24, job 56628143);
-      checkpointed + resumable, resubmit with a longer wall.** Slow because 1600-token truncation
-      chops the "Cypher output:" cue off long-schema prompts → model generates to the 1024-token
-      cap on those examples (itself corroborating the truncation-hurts mechanism).
+- [x] **1b. Reproduce the published 0.5560 — DONE (2026-09-09), NOT reproduced: GLEU 0.1965.**
+      Hard right-truncation at 1600 collapses corpus GLEU (8.8% of prompts lose the "Cypher
+      output:" cue → generation-cap rambling dominates the corpus denominator; untruncated
+      remainder scores 0.6725). No plain truncation setting yields 0.5560 (full schema 0.6455,
+      truncated 0.196) → outcome (ii): harness component real but mechanistically unattributed.
       Implemented as `scripts/drac_neo4j_repro_eval.sh`: the published adapter through
       `drac_inference.py` with `--no-cot-prompt --max-length 1600` (right-truncation, greedy,
       4-bit — identical to A2 except the truncation). Adapter provided via git-lfs clone at
@@ -54,10 +55,13 @@ on the full sequence).
       → packing this run → A2 0.6455 (published adapter). If packing lands near 0.6455, the
       +0.14 training gap is FULLY explained (masking +0.044 + packing) and the paper's
       "remainder unexplained" caveat retires; if not, the residual stays flagged.
-- [ ] **1d. Write the verdict.** Two honest outcomes, both fine for the paper:
-      (i) we reproduce 0.5560 → harness calibrated, the +0.14 is a real **stronger-SFT-recipe**
-      contribution (completion-only masking) worth a paragraph; or (ii) we don't → document the
-      residual as a framework/version artifact and stop trusting cross-harness absolute compares.
+- [x] **1d. Verdict WRITTEN (2026-09-09) — outcome (ii), both halves measured.** Neither the
+      published artifact (documented recipe retrained in-pipeline → 0.7330 vs its 0.6455) nor its
+      published score (documented inference → 0.196 or 0.6455, never 0.5560) is reproducible from
+      documentation. Recipe knobs = ≈0.05 of the +0.14 training gap (masking +0.044, packing
+      +0.009); the rest of both gaps is implementation-level. Cross-harness absolute comparisons
+      formally distrusted; the paper's recipe paragraph carries the full two-sided verdict.
+      **Item 1 closed — no open experiments remain in the project.**
 
 ---
 
