@@ -88,20 +88,43 @@ which yields three testable predictions: string-diversity methods should fail (P
 execution-grounded methods should still transfer (P2), and decomposition-style reasoning should
 actively hurt (P3).
 
-This paper did not begin as a negative result, and the path matters because it is itself one of the
-findings. The project's original comparison followed standard practice: we fine-tuned a CoT model
-and measured it against the benchmark's \emph{published} fine-tuned baseline, run through our own
-evaluation harness. The apparent gain was large ($+0.12$ GLEU), stable, and survived months of
-supporting analysis---until a second-model-family experiment forced us to train our own
-direct-answer baseline in our own pipeline, and the sign flipped. The entire headline had been the
-training pipeline; CoT was subtracting from it (Table~\ref{tab:decomp}). A second apparent
-positive, a length-generalization state-of-the-art on ZOGRASCOPE \citep{zograscope2025}, dissolved
-the same week under a content-level leakage audit (58.6\% train--test overlap that instance-ID
-checks had missed). Neither error is exotic---comparing against published artifacts and trusting
-ID-disjoint splits are both common practice---which is exactly why we report them as results rather
-than bury them.
+% ===== CONFOUND PARAGRAPH — three variants; exactly ONE active. Decide with Alex. =====
+% ----- VARIANT 1 (original, autobiographical) -----
+% This paper did not begin as a negative result, and the path matters because it is itself one of the
+% findings. The project's original comparison followed standard practice: we fine-tuned a CoT model
+% and measured it against the benchmark's \emph{published} fine-tuned baseline, run through our own
+% evaluation harness. The apparent gain was large ($+0.12$ GLEU), stable, and survived months of
+% supporting analysis---until a second-model-family experiment forced us to train our own
+% direct-answer baseline in our own pipeline, and the sign flipped. The entire headline had been the
+% training pipeline; CoT was subtracting from it (Table~\ref{tab:decomp}). A second apparent
+% positive, a length-generalization state-of-the-art on ZOGRASCOPE \citep{zograscope2025}, dissolved
+% the same week under a content-level leakage audit (58.6\% train--test overlap that instance-ID
+% checks had missed). Neither error is exotic---comparing against published artifacts and trusting
+% ID-disjoint splits are both common practice---which is exactly why we report them as results rather
+% than bury them.
+% ----- VARIANT 3 (compressed, impersonal) -----
+% Two cautionary results frame the protocol. Comparing against the benchmark's \emph{published}
+% fine-tuned baseline---standard practice in this space---yields an apparent $+0.12$ GLEU gain from
+% CoT that a matched in-pipeline control reverses (Table~\ref{tab:decomp}); and verifying train--test
+% hygiene by instance ID alone passes a ZOGRASCOPE \citep{zograscope2025} setup carrying 58.6\%
+% content-level overlap, manufacturing an apparent length-generalization state-of-the-art. Both
+% illusions are documented as results (\S\ref{sec:matched}, \S\ref{sec:robust}) and motivate the
+% discipline that follows.
+% ----- VARIANT 2 (depersonalized, full length) — ACTIVE -----
+The study is framed by a methodological demonstration. Standard practice in this space is to
+measure a new technique against a \emph{published} fine-tuned baseline, run through one's own
+evaluation harness. For CoT distillation on the Neo4j benchmark, that comparison yields a large and
+stable apparent gain ($+0.12$ GLEU)---large enough to anchor a paper, and reinforced by every
+downstream analysis built on top of it. Training the matched direct-answer control in the same
+pipeline reverses the sign: the apparent gain decomposes into $+0.14$ from the training pipeline
+and $-0.017$ from CoT itself (Table~\ref{tab:decomp}). A second standard practice, verifying
+train--test hygiene by instance ID alone, likewise manufactures an apparent length-generalization
+state-of-the-art on ZOGRASCOPE \citep{zograscope2025} that dissolves under content-level auditing
+(58.6\% train--test overlap). Both practices are common, and both produce publishable illusions;
+we therefore report them as results rather than footnotes.
+% ===== END CONFOUND VARIANTS =====
 
-The corrected study is built so that no such confound can recur. Every comparison fixes the base
+Our study is built so that neither confound can recur. Every comparison fixes the base
 model, the QLoRA configuration, the loss masking, the teacher, and the decoding, and varies
 \emph{only} the training target: the query alone (\emph{direct}) versus a reasoning trace followed
 by the query (\emph{CoT}). We instantiate this protocol across two model families (Gemma-2-9B,
