@@ -52,25 +52,88 @@ in-pipeline baseline, produced months of false ``CoT helps'' conclusions.
 %------------------------------------------------------------------
 \section{Introduction}
 %------------------------------------------------------------------
-Text-to-SQL is a mature field with a well-stocked toolbox: CoT distillation \citep{he2025starsql,
-tai2023cot}, self-consistency, execution-based candidate selection, and reinforcement learning have
-each produced large gains. Text-to-Cypher---translating natural language to the graph query language
-of Neo4j \citep{ozsoy2025text2cypher}---is younger and structurally different, and it is tempting to
-assume the SQL toolbox carries over. This paper asks, in a controlled setting, \emph{which techniques
-actually transfer, and why}.
+Relational databases have a mature natural-language interface problem, Text-to-SQL, backed by a
+decade of intensive work. Graph databases pose the younger sibling of that problem. Systems such as
+Neo4j store entities and their relationships as first-class graph structure and are queried in
+Cypher, whose central construct is a drawn path such as \texttt{(p:Person)-[:ACTED\_IN]->(m)}.
+Graph workloads---fraud rings, recommendation networks, knowledge graphs---are exactly the settings
+where non-expert users most want to ask questions in natural language, and the Neo4j
+Text2\-Cypher benchmark \citep{ozsoy2025text2cypher} has made the task measurable at scale. The economically
+interesting regime is small open-weight models: an 8--9B model that translates reliably can be
+served cheaply and privately, where frontier-model APIs cannot. But small models need every trick
+available, which raises the question this paper is about: \emph{where should those tricks come
+from?}
 
-Our organizing idea is the \textbf{constrained-output-space hypothesis} (\S\ref{sec:hyp}): a Cypher
-basic graph pattern is a single \emph{connected} object admitting few semantically-equivalent surface
-forms, unlike SQL, which composes from sub-queries and joins and admits many. This structural
-difference yields three testable predictions about transfer, P1--P3, developed in \S\ref{sec:hyp}.
+The obvious source is Text-to-SQL, which offers a well-stocked toolbox with headline numbers
+attached. Chain-of-thought (CoT) distillation---fine-tuning a small model on teacher-written
+reasoning traces rather than bare queries---is the highest-profile item: STaR-SQL
+\citep{he2025starsql} reports 86.6\% Spider execution accuracy, an 18-point improvement over
+direct-answer fine-tuning. Around it sit self-consistency \citep{wang2022selfconsistency},
+execution-based candidate selection, decomposition pipelines \citep{tai2023cot, pourreza2023dinsql},
+and execution-rewarded reinforcement learning \citep{shao2024deepseekmath, yao2025arctic}. Prior
+Text-to-Cypher work has begun importing these techniques one at a time---RL
+\citep{tran2025refining}, iterative refinement \citep{ozsoy2025iterative}, schema filtering
+\citep{ozsoy2025schema}---and reporting absolute numbers. What no prior work provides is a
+\emph{matched-pipeline} test of the transfer assumption itself: a comparison in which a single
+technique is the only variable, against a baseline trained in the same pipeline. This paper asks,
+in that controlled setting, \emph{which techniques actually transfer, and why}.
 
-Our headline finding tests the most important transfer---CoT distillation---and it is negative.
-Under a matched pipeline where the \emph{only} variable is the training target (a reasoning trace
-followed by the query, versus the query alone), CoT distillation modestly \emph{degrades}
-Text-to-Cypher across two model families and every regime we test. We trace an earlier positive
-framing of this same project to two confounds: an unmatched baseline (a published adapter used as a
-control) and a leaked cross-split evaluation. We then explain the negative result mechanistically and
-show which techniques \emph{do} transfer.
+There is a structural reason to doubt that transfer is automatic. A SQL query \emph{composes}:
+sub-queries, CTEs, and join clauses are separable parts that can be drafted independently, and the
+same semantics admits many surface forms. A Cypher basic graph pattern is a single \emph{connected}
+object---every node variable is shared between adjacent relationship atoms---that must be assembled
+as a whole, and for a given schema and question it typically has one canonical surface form. We
+develop this contrast into the \textbf{constrained-output-space hypothesis} (\S\ref{sec:hyp}),
+which yields three testable predictions: string-diversity methods should fail (P1),
+execution-grounded methods should still transfer (P2), and decomposition-style reasoning should
+actively hurt (P3).
+
+This paper did not begin as a negative result, and the path matters because it is itself one of the
+findings. The project's original comparison followed standard practice: we fine-tuned a CoT model
+and measured it against the benchmark's \emph{published} fine-tuned baseline, run through our own
+evaluation harness. The apparent gain was large ($+0.12$ GLEU), stable, and survived months of
+supporting analysis---until a second-model-family experiment forced us to train our own
+direct-answer baseline in our own pipeline, and the sign flipped. The entire headline had been the
+training pipeline; CoT was subtracting from it (Table~\ref{tab:decomp}). A second apparent
+positive, a length-generalization state-of-the-art on ZOGRASCOPE \citep{zograscope2025}, dissolved
+the same week under a content-level leakage audit (58.6\% train--test overlap that instance-ID
+checks had missed). Neither error is exotic---comparing against published artifacts and trusting
+ID-disjoint splits are both common practice---which is exactly why we report them as results rather
+than bury them.
+
+The corrected study is built so that no such confound can recur. Every comparison fixes the base
+model, the QLoRA configuration, the loss masking, the teacher, and the decoding, and varies
+\emph{only} the training target: the query alone (\emph{direct}) versus a reasoning trace followed
+by the query (\emph{CoT}). We instantiate this protocol across two model families (Gemma-2-9B,
+Llama-3.1-8B) and three query formalisms (Cypher, SPARQL, SQL), score with both translation and
+execution metrics on leakage-verified splits, and attach paired-bootstrap confidence intervals to
+every central delta.
+
+The verdict is uniform. CoT distillation degrades Text-to-Cypher on every metric, for both model
+families, with naive and with execution-verified traces, in-distribution and under compositional
+and length generalization; matched controls return the same sign for SPARQL and---under the
+literature's own execution-accuracy metric, on Spider---for SQL itself. Twelve deltas, all
+negative, all with confidence intervals excluding zero. The Spider result carries particular
+weight: it closes the possibility that our SQL negative was a string-metric artifact, and it
+removes the expected sign flip that a purely structural account would predict. Our best-supported
+explanation is \emph{baseline strength}: our completion-only training recipe produces direct
+baselines strong enough to erase reasoning's headroom---our plain direct-SFT model reaches 76.7\%
+Spider dev execution accuracy, above the 75.0\% STaR-SQL reports for its CoT-fine-tuned
+counterpart---suggesting that published CoT-SFT gains partly measure the weakness of their
+direct-answer controls.
+
+What the structural hypothesis does govern, we show, is \emph{how} CoT fails and \emph{which}
+remedies work. On execution-grounded diagnostics, 97\% of CoT's failures identify the correct
+relationships but assemble them into the wrong connected structure; a holistic-reasoning ablation
+that removes decomposition recovers $\sim$40\% of the penalty by cutting pattern fragmentation
+5--6$\times$, establishing the mechanism causally, and the residual traces to error accumulation
+(filter values corrupted during reasoning, then faithfully copied into the query). On the remedy
+side, execution-result selection transfers exactly as P2 predicts---clustering sampled candidates
+by their result sets beats both greedy decoding and string voting---and the mundane recipe choice
+of completion-only loss masking transfers with force. A final methodological finding rounds out the
+study: neither the published baseline artifact (from its documented recipe) nor its published score
+(from its documented inference) proved reproducible, so cross-harness absolute comparisons are
+untrustworthy in this space, and within-pipeline deltas are the only safe currency.
 
 \noindent\textbf{Contributions.}
 \begin{enumerate}[leftmargin=*]
@@ -86,6 +149,14 @@ show which techniques \emph{do} transfer.
   \item \textbf{A methodological lesson}: always train a matched in-pipeline baseline before
   attributing a delta to an intervention (\S\ref{sec:discussion}).
 \end{enumerate}
+
+\noindent\textbf{Organization.} \S\ref{sec:hyp} states the hypothesis and its predictions;
+\S\ref{sec:protocol} specifies the matched protocol, metrics, and leakage discipline.
+\S\ref{sec:matched}--\ref{sec:robust} present the matched negative result and its robustness
+checks, \S\ref{sec:crossform} the cross-formalism controls (SPARQL, SQL, Spider), and
+\S\ref{sec:positive} the techniques that do transfer, including the training-recipe decomposition
+and its reproducibility findings. \S\ref{sec:mech} establishes the mechanism causally, and
+\S\ref{sec:discussion} develops the baseline-strength account and the methodological lessons.
 
 %------------------------------------------------------------------
 \section{Related Work}
