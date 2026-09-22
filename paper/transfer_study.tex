@@ -40,13 +40,14 @@ negative to SPARQL and---under the literature's own execution-accuracy metric, o
 itself ($-0.099$): against a strong completion-only SFT recipe, reasoning distillation subtracts
 everywhere we measure, consistent with a \emph{baseline-strength} account of published CoT gains,
 while output-space structure governs the failure modes and the remedies.
-Apparent gains reported under an earlier framing are attributable to a stronger supervised
-fine-tuning recipe and a leaked benchmark split, not to reasoning. We give a causal mechanism: CoT's
+Apparent gains under standard evaluation practice---comparing against a published fine-tuned
+baseline---are attributable to a stronger supervised fine-tuning recipe and a leaked benchmark
+split, not to reasoning. We give a causal mechanism: CoT's
 decompositional bias fragments connected graph patterns, and a holistic-reasoning ablation recovers
 $\sim$40\% of the penalty by cutting fragmentation 5--6$\times$. Consistent with the hypothesis,
 execution-grounded selection transfers (+1.1pp exact match) while string self-consistency does not.
 We close with a methodological lesson: a published artifact used as a control, rather than a matched
-in-pipeline baseline, produced months of false ``CoT helps'' conclusions.
+in-pipeline baseline, yields a large and fully spurious ``CoT helps'' result.
 \end{abstract}
 
 %------------------------------------------------------------------
@@ -336,10 +337,11 @@ benchmark's 31.7\% verbatim question leakage.
 \subsection{The matched negative result on Text-to-Cypher}
 \label{sec:matched}
 Table~\ref{tab:matched} reports the matched comparison on the Neo4j 2024 benchmark. For \emph{both}
-model families, CoT \emph{lowers} every translation and execution metric. A secondary claim from the
-earlier framing also fails: CoT does not improve syntactic validity. The direct-answer Gemma produces
-\emph{fewer} invalid queries than its CoT counterpart (100 vs.\ 114 execution errors); the earlier
-``CoT halves prediction errors'' observation compared against the unmatched published adapter's 242.
+model families, CoT \emph{lowers} every translation and execution metric. A secondary apparent
+positive from the unmatched comparison also fails: CoT does not improve syntactic validity. The
+direct-answer Gemma produces \emph{fewer} invalid queries than its CoT counterpart (100 vs.\ 114
+execution errors); the apparent ``CoT halves prediction errors'' effect exists only against the
+published adapter's 242.
 
 \begin{table}[t]\centering
 \caption{Matched direct-vs-CoT on Neo4j 2024 (our pipeline; only the training target differs).
@@ -364,14 +366,15 @@ Llama-3.1-8B & CoT    & 0.7416 & 0.3000 & 0.2161 \\
 \end{tabular}
 \end{table}
 
-The positive result reported under an earlier framing of this project decomposes cleanly
-(Table~\ref{tab:decomp}): the apparent ``+0.1227 GLEU from CoT'' was a comparison against a
-\emph{published} adapter run through our inference harness, not a matched control. Replacing that
-baseline with our own direct-answer model shows the gain was the training pipeline ($+0.1399$); CoT
-itself \emph{subtracts} ($-0.0172$).
+The apparent positive that standard practice produces decomposes cleanly (Table~\ref{tab:decomp}):
+measuring the CoT model against the \emph{published} adapter run through our inference
+harness---rather than against a matched control---yields ``+0.1227 GLEU from CoT.'' Replacing that
+baseline with the matched direct-answer model shows the gain was the training pipeline ($+0.1399$);
+CoT itself \emph{subtracts} ($-0.0172$).
 
 \begin{table}[t]\centering
-\caption{Decomposition of the previously reported ``+0.1227 GLEU from CoT'' on Neo4j 2024.}
+\caption{Decomposition of the apparent ``+0.1227 GLEU from CoT'' produced by the unmatched
+published-baseline comparison (Neo4j 2024).}
 \label{tab:decomp}
 \begin{tabular}{lc}
 \toprule
@@ -380,7 +383,7 @@ Component & $\Delta$ GLEU \\
 Pipeline (Neo4j published adapter $\to$ our direct-answer adapter, same inference) & $+0.1399$ \\
 CoT (our direct-answer $\to$ our CoT) & $-0.0172$ \\
 \midrule
-Net (previously reported as ``CoT'') & $+0.1227$ \\
+Net (apparent ``CoT effect'') & $+0.1227$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -397,8 +400,8 @@ to STaR-SQL's on SQL---so forward Cypher generation is not intrinsically harder)
 below direct (exec EM $0.0939$ vs.\ $0.1052$, with 60\% more invalid queries); absolute numbers are
 low because the training set is small, but the comparison is internally matched.
 \textbf{Generalization.} On clean, per-split ZOGRASCOPE (leakage-verified), direct-answer wins every
-split including length (Table~\ref{tab:zog})---overturning an earlier ``length-generalization SOTA''
-claim that was a cross-split leakage artifact.
+split including length (Table~\ref{tab:zog})---reversing the apparent ``length-generalization
+SOTA'' that the leaked merged-split evaluation manufactures.
 
 \begin{table}[t]\centering
 \caption{Clean ZOGRASCOPE execution accuracy (per-split, leakage-verified). Direct wins every split;
@@ -611,17 +614,17 @@ not string diversity). We deliberately refrain from comparing penalty magnitudes
 the benchmarks differ in task character, scale, and metric, so only the within-benchmark sign and
 the mechanism are portable conclusions.
 
-\paragraph{A published artifact is not a control.} The earlier framing of this project reported
-$+0.1227$ GLEU from CoT. The comparison was against a \emph{published} fine-tuned adapter run through
-our inference harness---a baseline differing from our CoT model in training pipeline and inference
-context, not just in training target. Training the matched direct-answer control reversed the sign of
-the headline (Table~\ref{tab:decomp}); a leaked cross-split evaluation had likewise manufactured a
-``length-generalization SOTA'' (\S\ref{sec:robust}). Neither error was exotic: one borrowed a control,
-the other trusted instance-ID disjointness. Both are common practice. The lesson is uncomfortable and
-general: \emph{deltas attributed to an intervention are only meaningful against a baseline trained in
-the same pipeline}, and split hygiene must be verified at the content level, not the ID level. We
-document the failure in detail precisely because the corrected study was only possible after making
-it.
+\paragraph{A published artifact is not a control.} The unmatched comparison that standard practice
+licenses reports $+0.1227$ GLEU from CoT (Table~\ref{tab:decomp}). Its baseline---a \emph{published}
+fine-tuned adapter run through our inference harness---differs from the CoT model in training
+pipeline and inference context, not just in training target, and the matched direct-answer control
+reverses the sign. A leaked cross-split evaluation likewise manufactures a ``length-generalization
+SOTA'' (\S\ref{sec:robust}) that instance-ID checks pass. Neither error is exotic: one borrows a
+control, the other trusts ID-disjointness, and both are common practice. The lesson is uncomfortable
+and general: \emph{deltas attributed to an intervention are only meaningful against a baseline
+trained in the same pipeline}, and split hygiene must be verified at the content level, not the ID
+level. We demonstrate both failure modes in full detail precisely because they are cheap to fall
+into and expensive to detect.
 
 %------------------------------------------------------------------
 \section{Limitations}
@@ -664,10 +667,10 @@ forms, so decomposition fragments them (causally shown), reasoning-first generat
 copy errors, and sampling yields no diversity worth voting over---while execution results, which
 bypass surface form entirely, remain a useful signal. The uniform sign across formalisms points to
 a complementary cause: against a strong direct-answer recipe, reasoning distillation has no
-headroom left to occupy. The broader lesson is methodological: the apparent CoT gain that motivated this
-project was an artifact of borrowing a published model as a control, and it took a matched
-in-pipeline baseline to find the sign of the true effect. Toolboxes do not transfer by default;
-controls do not transfer at all.
+headroom left to occupy. The broader lesson is methodological: the large apparent CoT gain that
+standard practice produces is an artifact of borrowing a published model as a control, and it takes
+a matched in-pipeline baseline to find the sign of the true effect. Toolboxes do not transfer by
+default; controls do not transfer at all.
 
 \bibliographystyle{plainnat}
 \bibliography{references}
