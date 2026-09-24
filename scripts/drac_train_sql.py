@@ -44,15 +44,23 @@ SQL_COT_INSTRUCTION = (
 
 
 class CompletionOnlyCollator:
-    """Mask loss before the assistant response template (same as Gemma baselines)."""
+    """Mask loss before the assistant response template (same as Gemma baselines).
 
-    def __init__(self, tokenizer, response_template: str, max_length: int):
+    mask_prompt=False gives FULL-SEQUENCE loss (every non-pad token, prompt
+    included) — the literature-typical weak recipe used by --full-sequence."""
+
+    def __init__(self, tokenizer, response_template: str, max_length: int,
+                 mask_prompt: bool = True):
         self.tokenizer = tokenizer
         self.response_template_ids = tokenizer.encode(response_template, add_special_tokens=False)
         self.max_length = max_length
+        self.mask_prompt = mask_prompt
 
     def _build_labels(self, input_ids, attention_mask):
         labels = input_ids.clone()
+        if not self.mask_prompt:
+            labels[attention_mask == 0] = -100
+            return labels
         rt, rt_len = self.response_template_ids, len(self.response_template_ids)
         for i, ids in enumerate(input_ids):
             ids_list = ids.tolist()
@@ -137,7 +145,11 @@ def train(args):
         BASE_MODEL, quantization_config=bnb, attn_implementation="eager", device_map="auto", **kwargs)
     lora = LoraConfig(r=64, lora_alpha=64, lora_dropout=0.05,
                       target_modules="all-linear", bias="none", task_type="CAUSAL_LM")
-    collator = CompletionOnlyCollator(tokenizer, "<start_of_turn>model\n", max_length=1600)
+    collator = CompletionOnlyCollator(tokenizer, "<start_of_turn>model\n", max_length=1600,
+                                      mask_prompt=not args.full_sequence)
+    print(f"[{args.variant}] Loss masking: "
+          + ("FULL-SEQUENCE (prompt + answer) [weak recipe]" if args.full_sequence
+             else "completion-only (answer tokens only) [strong recipe]"))
 
     sft_kwargs = dict(
         output_dir=args.output_dir, num_train_epochs=args.num_epochs,
@@ -202,8 +214,16 @@ def evaluate(args):
         examples = [json.loads(line) for line in f]
     print(f"[{args.variant}] Test set: {len(examples)} examples")
 
+    n_samp = args.num_samples
+    per_ex = n_samp if n_samp > 0 else 1
+    suffix = f"_sc{n_samp}" if n_samp > 0 else ""
+    if n_samp > 0:
+        print(f"[{args.variant}] SAMPLING mode: {n_samp} candidates/example, "
+              f"T={args.temperature}, top_p=0.95")
+
     os.makedirs(args.output_dir, exist_ok=True)
-    pred_path = os.path.join(args.output_dir, f"predictions_{args.tag}_{args.variant}.jsonl")
+    pred_path = os.path.join(args.output_dir,
+                             f"predictions_{args.tag}_{args.variant}{suffix}.jsonl")
     done = 0
     if os.path.exists(pred_path):
         with open(pred_path) as f:
@@ -222,23 +242,46 @@ def evaluate(args):
             inputs = tokenizer(prompts, return_tensors="pt", padding=True,
                                truncation=True, max_length=4096).to(model.device)
             with torch.no_grad():
-                tokens = model.generate(**inputs, do_sample=False, max_new_tokens=max_new,
-                                        pad_token_id=tokenizer.eos_token_id)
+                if n_samp > 0:
+                    tokens = model.generate(**inputs, do_sample=True, temperature=args.temperature,
+                                            top_p=0.95, num_return_sequences=n_samp,
+                                            max_new_tokens=max_new,
+                                            pad_token_id=tokenizer.eos_token_id)
+                else:
+                    tokens = model.generate(**inputs, do_sample=False, max_new_tokens=max_new,
+                                            pad_token_id=tokenizer.eos_token_id)
                 new = tokens[:, inputs.input_ids.shape[1]:]
                 raws = tokenizer.batch_decode(new, skip_special_tokens=True)
-            for ex, raw in zip(batch, raws):
-                out_f.write(json.dumps({
-                    "instance_id": ex.get("instance_id", ""),
-                    "db_id": ex.get("db_id", ""),  # for Spider execution eval
-                    "predicted_sql": parse_sql(raw),
-                    "reference_sql": ex["sql"],
-                    "sql_complexity": ex.get("sql_complexity", "unknown"),
-                    "raw_output": raw,
-                }) + "\n")
+            # generate() returns each example's num_return_sequences consecutively
+            for k, ex in enumerate(batch):
+                ex_raws = raws[k * per_ex:(k + 1) * per_ex]
+                if n_samp > 0:
+                    rec = {
+                        "instance_id": ex.get("instance_id", ""),
+                        "db_id": ex.get("db_id", ""),
+                        "reference_sql": ex["sql"],
+                        "sql_complexity": ex.get("sql_complexity", "unknown"),
+                        "candidates": [parse_sql(r) for r in ex_raws],
+                    }
+                else:
+                    rec = {
+                        "instance_id": ex.get("instance_id", ""),
+                        "db_id": ex.get("db_id", ""),  # for Spider execution eval
+                        "predicted_sql": parse_sql(ex_raws[0]),
+                        "reference_sql": ex["sql"],
+                        "sql_complexity": ex.get("sql_complexity", "unknown"),
+                        "raw_output": ex_raws[0],
+                    }
+                out_f.write(json.dumps(rec) + "\n")
             if (i + bs) % 100 < bs:
                 out_f.flush()
                 rate = (i + bs - done) / (time.time() - start)
                 print(f"  [{i + bs}/{len(examples)}] {rate:.2f}/s")
+
+    if n_samp > 0:
+        print(f"\n[{args.variant}] Wrote {n_samp} candidates/example to {pred_path}. "
+              "Score with scripts/eval_spider_selection.py.")
+        return
 
     with open(pred_path) as f:
         recs = [json.loads(line) for line in f]
@@ -280,6 +323,15 @@ def main():
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--tag", default="sql",
                    help="Prefix for output files (use 'spider' for the Spider run).")
+    p.add_argument("--full-sequence", action="store_true",
+                   help="Train with FULL-SEQUENCE loss (prompt included) instead of "
+                        "completion-only masking: the weak, literature-typical recipe.")
+    p.add_argument("--num-samples", type=int, default=0,
+                   help="Eval only: sample N candidates per example (0 = greedy). "
+                        "Writes predictions_{tag}_{variant}_scN.jsonl with a "
+                        "'candidates' list for eval_spider_selection.py.")
+    p.add_argument("--temperature", type=float, default=0.7,
+                   help="Sampling temperature for --num-samples (top_p fixed at 0.95).")
     args = p.parse_args()
     if args.eval:
         evaluate(args)

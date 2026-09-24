@@ -112,6 +112,16 @@ BASELINE_INSTRUCTION = (
     "Cypher output:"
 )
 
+# CoT prompt + target for --cot. Must stay byte-identical to train_cot.py (the A3
+# model) and drac_inference.py's COT_INSTRUCTION, or eval sees a prompt mismatch.
+COT_INSTRUCTION = (
+    "Generate Cypher statement to query a graph database.\n"
+    "Use only the provided relationship types and properties in the schema.\n"
+    "Schema: {schema}\n"
+    "Question: {question}\n\n"
+    "Think step by step, then provide the Cypher query."
+)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune Gemma-2-9B baseline (no CoT)")
@@ -136,18 +146,30 @@ def main():
         "arm (GLEU 0.7415) the ONLY variable is packing; if it lands near A2's "
         "0.6455, the +0.14 training gap is fully explained (masking + packing).",
     )
+    parser.add_argument(
+        "--cot",
+        action="store_true",
+        help="Train the CoT target (reasoning + Cypher, CoT prompt) in exactly the "
+        "A3 format instead of the direct target. With --full-sequence this is the "
+        "weak-recipe CoT arm: vs the 1c full-sequence direct arm (GLEU 0.7415) the "
+        "ONLY variable is the training target.",
+    )
     args = parser.parse_args()
     if args.packing and args.full_sequence:
         parser.error("--packing already implies full-sequence loss; pass only --packing")
 
-    # Load training data — ignore the reasoning field; train on (q, schema) -> cypher
+    # Direct: train on (q, schema) -> cypher. CoT: only rows with a reasoning trace,
+    # the same filter train_cot.py used for A3.
     records = []
     with open(args.train_data) as f:
         for line in f:
             rec = json.loads(line)
-            if rec.get("cypher", "").strip():
-                records.append(rec)
-    print(f"Loaded {len(records)} baseline training examples")
+            if not rec.get("cypher", "").strip():
+                continue
+            if args.cot and not rec.get("reasoning", "").strip():
+                continue
+            records.append(rec)
+    print(f"Loaded {len(records)} {'CoT' if args.cot else 'direct-answer'} training examples")
 
     kwargs = {"cache_dir": args.hf_cache} if args.hf_cache else {}
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, **kwargs)
@@ -156,10 +178,17 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
 
     def make_text(record):
-        user_content = BASELINE_INSTRUCTION.format(
+        instruction = COT_INSTRUCTION if args.cot else BASELINE_INSTRUCTION
+        user_content = instruction.format(
             schema=record["schema"], question=record["question"]
         )
-        assistant_content = record["cypher"]  # direct-answer target, no reasoning
+        if args.cot:
+            assistant_content = (
+                f"Reasoning:\n{record['reasoning']}\n\n"
+                f"Cypher output: {record['cypher']}"
+            )
+        else:
+            assistant_content = record["cypher"]
         messages = [
             {"role": "user", "content": user_content},
             {"role": "assistant", "content": assistant_content},

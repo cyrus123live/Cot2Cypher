@@ -33,35 +33,46 @@ recipe**, and show the gain vanishes under completion-only masking.
 demonstration; fully reconciles our negative with the published positives. This is the
 single highest-value addition available.
 
-**Cost.** Neo4j fullseq-CoT: 1 train (~12h H100) + 1 eval (~6h) — one-flag change to the
-existing trainer (`--full-sequence` already exists; just point it at the CoT target).
-Spider weak pair: add a `--full-sequence` flag to `drac_train_sql.py` (small build, mirrors
-the Gemma trainer), then one combined job (~16h, same shape as `drac_spider.sh`).
-**Fits this week comfortably.**
+**Cost.** Neo4j fullseq-CoT: 1 train + 1 eval (~1 GPU-day, mostly the slow CoT eval).
+Spider weak pair: one combined job (~3–4h; only 7,000 training examples).
+
+**BUILT 2026-09-24:**
+- `drac_train_sql.py --full-sequence` (SQL trainer loss-mask toggle)
+- `drac_train_gemma_baseline.py --cot` (CoT target in the exact A3 format; prompt verified
+  byte-identical to `train_cot.py` and `drac_inference.py`)
+- Jobs: `drac_spider_weak.sh` (Spider cell); `drac_train_gemma_fullseq_cot.sh` →
+  `drac_gemma_fullseq_cot_eval.sh` (Cypher cell, chained with `--dependency=afterok`)
 
 ---
 
-## E-B. Direct-arm candidate diversity (the fair fight for selection) — PRIORITY 2
+## E-B. Candidate diversity for selection, on Spider — PRIORITY 2
 
-**Question.** STaR-SQL's celebrated +18pp was CoT **plus verifier best-of-16** — CoT's real
-role there may be *candidate diversity for selection*, not better single answers. We never
-sampled candidates from the direct model, so the selection comparison (SC@5, MBR, oracle)
-has only been run on the CoT arm.
+**Question.** STaR-SQL's celebrated +18pp was CoT **plus verifier best-of-16** (CoT-SFT
+alone gave +6.4) — CoT's real role there may be *candidate diversity for selection*, not
+better single answers. We never sampled candidates from a direct model, so our selection
+comparison (SC@5, MBR, oracle) exists only for the Cypher CoT arm.
 
-**Design.** Sample SC@5 (T=0.7) from the direct Gemma (A5) on the Neo4j exec subset; compute
-string-vote / MBR / oracle; compare to the CoT arm's existing numbers (0.2509 / 0.2665 /
-0.4302).
+**Design (moved from Neo4j to Spider, 2026-09-24).** Sample 5 candidates (T=0.7,
+top_p=0.95) from each existing strong-recipe Spider adapter; score string-vote,
+execution-MBR, and oracle, with paired-bootstrap CIs on CoT − direct. Spider is the better
+venue: execution runs against local SQLite (no demo-DB drift, no network — the Neo4j version
+would have to re-execute June's CoT candidates alongside), and best-of-N on Spider is exactly
+STaR-SQL's setting.
 
-**Pre-registered prediction.** Under the constrained-output-space hypothesis, Cypher offers
-little diversity to either arm — oracles should be similar, with direct's likely higher
-(its greedy is +4.2pp). If instead CoT's oracle is clearly higher, CoT retains a defensible
-role as a diversity engine for best-of-N, and the paper's conclusion gets an honest nuance.
+**Pre-registered prediction.** Direct's oracle and MBR stay at or above CoT's (the negative
+extends to selection). If instead CoT's oracle/MBR is clearly higher, CoT keeps a defensible
+role as a candidate generator for best-of-N — the honest answer to "can we make CoT not
+hurt?"
 
-**What it buys.** Closes the last "you didn't give CoT its strongest form" objection;
-completes the selection story either way.
+**What it buys.** Closes the last "you didn't give CoT its strongest form" objection and
+engages STaR-SQL's actual mechanism.
 
-**Cost.** Inference-only: one GPU job (5 samples × test set, existing `--self-consistency`
-harness) + local execution clustering (existing scripts). No build. **Fits this week.**
+**Cost.** Inference-only, ~3–6h GPU.
+
+**BUILT 2026-09-24:** `drac_train_sql.py --eval --num-samples N --temperature T`;
+`eval_spider_selection.py` (validated locally: with one candidate per example it reproduces
+the greedy 0.7669 / 0.6683 and the bootstrap CI [−0.1238, −0.0735] exactly); job
+`drac_spider_sampling.sh`.
 
 ---
 
@@ -114,7 +125,9 @@ camera-ready/journal version.
 
 ## Recommended package given the timeline
 
-**Run E-A + E-B in parallel this week** (3–4 DRAC jobs total, one small build), fold results
+**Run E-A + E-B in parallel this week** (4 DRAC jobs, ~1.5 GPU-days total), fold results
 into the paper during the editing pass, run E-C only if E-A's Spider cell flips. Defer E-D
 to future work. If Alex prefers zero new experiments, the paper stands as-is and everything
 above moves to the thesis's future-work chapter.
+
+**Status 2026-09-24:** E-A and E-B built and pushed; ready to submit on Fir.
